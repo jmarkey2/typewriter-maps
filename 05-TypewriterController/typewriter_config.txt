@@ -1,0 +1,43 @@
+{
+  "channels": {
+    "SPACEBAR": 9,
+    "BLUE": 8,
+    "CORRECTION": 11,
+    "RETURN": 10
+  },
+  "angles": {	
+    "SPACE_REST_ANGLE": 0,
+    "SPACE_PRESS_ANGLE": 45,
+
+    "BLUE_REST_ANGLE": 90,
+    "BLUE_PRESS_ANGLE": 62,
+
+    "CORR_REST_ANGLE": 180,
+    "CORR_HOLD_ANGLE": 60,
+
+    "RETURN_REST_ANGLE": 90,
+    "RETURN_PRESS_ANGLE": 60
+  },
+  "timing": {
+    "PRESS_TIME": 0.2,
+    "BETWEEN_KEYS": 0.18,
+    "BETWEEN_CHARS": 0.2,
+    "NEW_LINE_DELAY": 1.25,
+    "CORR_ENGAGE_DELAY": 0.75,
+
+    "SPACE_TOGGLE_DELAY": 0,
+    "SPACE_REST_MOVE_DELAY": 0,
+
+    "RETURN_PRESS_HOLD": 0.17,
+
+    "CORR_RELEASE_MOVE_DELAY": 0.2,
+    "CORR_RELEASE_PAUSE": 0.2,
+
+    "SERVO_REST_MOVE_DELAY": 0.2,
+    "POST_BLUE_JITTER_DELAY": 0.06
+  },
+  "mode": {
+    "monochrome_enabled": false,
+    "monochrome_color": "BLUE"
+  }
+}

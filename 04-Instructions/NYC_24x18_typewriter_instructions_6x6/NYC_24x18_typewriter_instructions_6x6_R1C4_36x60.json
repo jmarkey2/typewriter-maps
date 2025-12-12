@@ -1,0 +1,546 @@
+{
+  "metadata": {
+    "generated_at": "2025-12-08T03:00:22.641Z",
+    "overall_rows": 108,
+    "overall_cols": 240,
+    "overall_width_in": 24,
+    "overall_height_in": 18,
+    "buffer": 0,
+    "swap_rows_cols": false,
+    "flip_vertical": true,
+    "flip_horizontal": false,
+    "vertical_parts": 4,
+    "horizontal_parts": 3,
+    "segment": {
+      "row_band": 1,
+      "col_band": 4,
+      "row_offset": 0,
+      "col_offset": 180,
+      "rows": 36,
+      "cols": 60,
+      "width_in": 6,
+      "height_in": 6
+    }
+  },
+  "typewriter_sequence": [
+    {
+      "GREEN": 60
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 58
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 55
+    },
+    {
+      "BLUE": 5
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 54
+    },
+    {
+      "BLUE": 6
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 54
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 4
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 51
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 6
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 50
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 6
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 50
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 6
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 48
+    },
+    {
+      "BLUE": 12
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 42
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 14
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 29
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "GREEN": 9
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 15
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 28
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 3
+    },
+    {
+      "BLUE": 8
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 16
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 31
+    },
+    {
+      "BLUE": 29
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 31
+    },
+    {
+      "BLUE": 29
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 24
+    },
+    {
+      "BLUE": 4
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 30
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 23
+    },
+    {
+      "BLUE": 37
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 23
+    },
+    {
+      "BLUE": 37
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 14
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 39
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 14
+    },
+    {
+      "BLUE": 46
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 14
+    },
+    {
+      "BLUE": 46
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 11
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 3
+    },
+    {
+      "BLUE": 45
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 10
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 47
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 8
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 49
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 6
+    },
+    {
+      "BLUE": 54
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 4
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 4
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 47
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 3
+    },
+    {
+      "BLUE": 8
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 48
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 51
+    },
+    {
+      "GREEN": 3
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "GREEN": 3
+    },
+    {
+      "BLUE": 50
+    },
+    {
+      "GREEN": 5
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 50
+    },
+    {
+      "GREEN": 7
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 50
+    },
+    {
+      "GREEN": 8
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 48
+    },
+    {
+      "GREEN": 10
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 20
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "GREEN": 3
+    },
+    {
+      "BLUE": 19
+    },
+    {
+      "GREEN": 11
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 20
+    },
+    {
+      "GREEN": 8
+    },
+    {
+      "BLUE": 16
+    },
+    {
+      "GREEN": 12
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 2
+    },
+    {
+      "BLUE": 19
+    },
+    {
+      "GREEN": 11
+    },
+    {
+      "BLUE": 13
+    },
+    {
+      "GREEN": 12
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 19
+    },
+    {
+      "GREEN": 15
+    },
+    {
+      "BLUE": 10
+    },
+    {
+      "GREEN": 12
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 16
+    },
+    {
+      "GREEN": 20
+    },
+    {
+      "BLUE": 8
+    },
+    {
+      "GREEN": 12
+    }
+  ]
+}
