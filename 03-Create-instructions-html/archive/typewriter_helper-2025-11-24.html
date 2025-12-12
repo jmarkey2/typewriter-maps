@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Typewriter Map Helper</title>
+<style>
+  :root{ --green:#4CAF50; --blue:#4169E1; --gridStroke:#9993; --panel:#f7f7f9; --accent:#0f766e; --muted:#6b7280; --doneBlur:1.5px }
+  html,body{height:100%;margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;color:#111}
+  body{display:flex;flex-direction:column;}
+  .wrap{display:flex;flex-direction:column;height:100%;gap:0}
+  .topPane{display:grid;grid-template-columns:420px 1fr;gap:16px;flex:1;min-height:55vh}
+  #bottomPane{border-top:1px solid #e5e7eb;background:#f9fafb;padding:10px 14px 14px 14px;overflow:auto;min-height:35vh}
+  header{grid-column:1/-1;padding:10px 14px;border-bottom:1px solid #e5e7eb;background:#fff;position:sticky;top:0;z-index:1}
+  header h1{font-size:18px;margin:0}
+  header .sub{color:#555;font-size:13px}
+  #sidebar{background:var(--panel);padding:12px 12px 80px 12px;overflow:auto;border-right:1px solid #e5e7eb}
+  #main{position:relative;overflow:auto;background:#fff}
+  .controls{display:grid;gap:10px;margin-bottom:10px}
+  .legend{display:flex;gap:10px;align-items:center;font-size:13px}
+  .swatch{width:14px;height:14px;border-radius:3px;border:1px solid #0002}
+  .swatch.green{background:var(--green)} .swatch.blue{background:var(--blue)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row{display:flex;gap:8px;align-items:center}
+  .switches{display:grid;gap:6px;margin-top:4px}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+  .stat{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px}
+  .stat b{display:block;font-size:18px}
+  .rows{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .rowItem{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
+  .rowItem header{display:flex;justify-content:space-between;align-items:center;border:0;padding:0;margin:0 0 6px 0;position:static}
+  .rowItem h3{margin:0;font-size:18px}
+  .rle{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:20px;line-height:1.5}
+  .rowBtns{display:flex;gap:6px}
+  button{cursor:pointer;border-radius:8px;border:1px solid #cbd5e1;background:#fff;padding:6px 10px}
+  button.primary{background:var(--accent);color:#fff;border-color:transparent}
+  button.small{padding:4px 8px;font-size:12px}
+  .done header .rowTitle{color:var(--muted);text-decoration:line-through}
+  .done .rle{color:#94a3b8}
+  .canvasWrap{padding:12px;min-width:900px}
+  svg{max-width:none; background:#fff}
+  .gridOutline{fill:none;stroke:#0003;stroke-width:1}
+  .cell{stroke:var(--gridStroke);stroke-width:0.5}
+  .cell.blue{fill:var(--blue)} .cell.green{fill:var(--green)}
+  .rowBlur{filter:blur(var(--doneBlur));opacity:.6}
+  .currentRow{outline:2.5px solid #222;outline-offset:-2px}
+  .hint{font-size:12px;color:#555}
+  .kbd{font-family:ui-monospace,Menlo,monospace;background:#f3f4f6;border:1px solid #e5e7eb;border-bottom-color:#d1d5db;border-radius:6px;padding:1px 6px}
+  .axisLabel{font:10px ui-monospace,Menlo,monospace;fill:#111}
+  .axisBg{fill:#fafafa;stroke:#ddd;stroke-width:1}
+  .hoverBox{position:sticky;bottom:8px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;margin-top:8px;font-size:12px}
+  .focusRowPanel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 2px rgba(15,23,42,0.04)}
+  .focusRowHeader{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .focusRowLabel{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280}
+  .focusRowName{font-size:20px;font-weight:600}
+  .focusRowBody{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+  .focusRowRle{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:22px;line-height:1.5}
+  .focusDoneBtn{font-size:16px;padding:10px 16px;border-radius:999px}
+  .rowItem.currentCard{border-color:var(--accent);box-shadow:0 0 0 2px rgba(15,118,110,0.15);}
+</style>
+</head>
+<body>
+<header>
+  <h1>Typewriter Map Helper</h1>
+  <div class="sub">Upload the grid GeoJSON from QGIS. Green = land (<b>mostly_overlap = True</b>), Blue = water.</div>
+</header>
+
+<div class="wrap">
+  <div class="topPane">
+  <aside id="sidebar">
+    <div class="controls">
+      <label><b>1) Upload grid GeoJSON</b></label>
+      <input id="file" type="file" accept=".geojson,application/geo+json,application/json" />
+      <div class="legend">
+        <span class="swatch green"></span> Green (True)
+        <span class="swatch blue"></span> Blue (False)
+      </div>
+
+      <div class="grid">
+        <label>Buffer (cells, pads all sides with water)<br>
+          <input id="bufferCells" type="number" min="0" step="1" value="0" style="width:110px">
+        </label>
+        <label>Zoom (cell size px)<br>
+          <input id="cellSize" type="range" min="10" max="30" value="22">
+        </label>
+      </div>
+
+      <div class="switches">
+        <label class="row"><input id="swapRC" type="checkbox"> Swap row/col</label>
+        <label class="row"><input id="flipV" type="checkbox" checked> Flip vertical (Row 1 at bottom)</label>
+        <label class="row"><input id="flipH" type="checkbox"> Flip horizontal (Col 1 at right)</label>
+        <label class="row"><input id="showLabels" type="checkbox"> Show row/column numbers</label>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span>Total characters</span><b id="totalChars">—</b></div>
+        <div class="stat"><span>Rows</span><b id="rowCount">—</b></div>
+        <div class="stat"><span>Done rows</span><b id="doneRows">0</b></div>
+        <div class="stat"><span>Completed characters</span><b id="doneChars">0</b></div>
+      </div>
+      <div class="hint">Keyboard: <span class="kbd">↑</span>/<span class="kbd">↓</span> change row, <span class="kbd">Space</span> toggle Done.</div>
+      <div class="hint" id="keyNote" hidden></div>
+
+      <!-- New export button -->
+      <button id="exportSequenceBtn" class="primary">Export typewriter sequence (.json)</button>
+
+      <div class="hoverBox" id="hoverInfo" hidden>Row —, Col — : —</div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div class="canvasWrap">
+      <svg id="svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-label="Grid canvas"></svg>
+    </div>
+  </main>
+  </div>
+
+  <section id="bottomPane">
+    <div id="focusRowPanel" class="focusRowPanel" hidden>
+      <div class="focusRowHeader">
+        <span class="focusRowLabel">Current row</span>
+        <span class="focusRowName" id="focusRowName">Row —</span>
+      </div>
+      <div class="focusRowBody">
+        <div class="focusRowRle" id="focusRowRle">Instructions will appear here after you load a grid.</div>
+        <button id="focusDoneBtn" class="primary focusDoneBtn">Mark row done</button>
+      </div>
+    </div>
+    <div class="rows" id="rows"></div>
+  </section>
+</div>
+
+<script>
+/* ---------- state ---------- */
+const state = {
+  rows:0, cols:0, base:[], currentRow:1, doneSet:new Set(),
+  keys:{row:"row", col:"col", bool:"mostly_overlap"},
+  swap:false, flipV:true, flipH:false, cellSize:22, buffer:0, showLabels:false
+};
+const els = {
+  file:document.getElementById('file'),
+  swap:document.getElementById('swapRC'),
+  flipV:document.getElementById('flipV'),
+  flipH:document.getElementById('flipH'),
+  labels:document.getElementById('showLabels'),
+  buffer:document.getElementById('bufferCells'),
+  cellSize:document.getElementById('cellSize'),
+  svg:document.getElementById('svg'),
+  rows:document.getElementById('rows'),
+  focusPanel:document.getElementById('focusRowPanel'),
+  focusRowName:document.getElementById('focusRowName'),
+  focusRowRle:document.getElementById('focusRowRle'),
+  focusDoneBtn:document.getElementById('focusDoneBtn'),
+  totalChars:document.getElementById('totalChars'),
+  rowCount:document.getElementById('rowCount'),
+  doneRows:document.getElementById('doneRows'),
+  doneChars:document.getElementById('doneChars'),
+  keyNote:document.getElementById('keyNote'),
+  hoverInfo:document.getElementById('hoverInfo'),
+  exportBtn:document.getElementById('exportSequenceBtn')
+};
+function prettyInt(n){return n.toLocaleString();}
+
+// Main focus-row Done button
+if(els.focusDoneBtn){
+  els.focusDoneBtn.addEventListener('click', () => {
+    const {rows} = workingGrid();
+    if(!rows) return;
+    if(!state.currentRow || state.currentRow < 1) state.currentRow = 1;
+    if(state.currentRow > rows) state.currentRow = rows;
+    const r = state.currentRow;
+
+    if(state.doneSet.has(r)){
+      state.doneSet.delete(r);
+    } else {
+      state.doneSet.add(r);
+      // auto-advance to the next unfinished row, if any
+      let next = r;
+      for(let i = r + 1; i <= rows; i++){
+        if(!state.doneSet.has(i)){ next = i; break; }
+      }
+      if(next !== r) state.currentRow = next;
+    }
+    renderAll();
+  });
+}
+
+/* ---------- file handling ---------- */
+els.file.addEventListener('change', async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const text=await f.text(); let gj; try{gj=JSON.parse(text);}catch(err){alert('Could not parse file as JSON.'); return;}
+  prepareFromGeoJSON(gj);
+});
+
+/* ---------- helper: dynamic key detection ---------- */
+function detectKeys(features){
+  const candBool=["mostly_overlap","is_land","land","value","bool","isTrue","is_true"];
+  const candRow=["row","Row","ROW","r"]; const candCol=["col","column","Col","c"];
+  const props=features[0]?.properties||{};
+  const pick=(arr)=>arr.find(k=>k in props)||arr[0];
+  return {bool:pick(candBool), row:pick(candRow), col:pick(candCol)};
+}
+function prepareFromGeoJSON(geojson){
+  const feats=(geojson.type==="FeatureCollection")?geojson.features:[];
+  if(!feats.length){ alert("No features in GeoJSON."); return; }
+  const k=detectKeys(feats); state.keys=k;
+
+  let maxR=0,maxC=0;
+  for(const f of feats){
+    const p=f.properties||{};
+    maxR=Math.max(maxR, +p[k.row]||0);
+    maxC=Math.max(maxC, +p[k.col]||0);
+  }
+  state.rows=maxR; state.cols=maxC;
+  const G=Array.from({length:state.rows},()=>Array.from({length:state.cols},()=>false));
+  for(const f of feats){
+    const p=f.properties||{}; const r=(+p[k.row]||0)-1, c=(+p[k.col]||0)-1;
+    if(r>=0 && r<state.rows && c>=0 && c<state.cols){
+      G[r][c]= !!p[k.bool];
+    }
+  }
+  state.base=G;
+  state.currentRow=1;
+  state.doneSet.clear();
+  renderAll();
+}
+
+/* ---------- padding + transforms ---------- */
+/* 1) Pad with blue border; 2) swap/flip */
+function workingGrid(){
+  // base clone
+  let G = state.base.map(row=>row.slice());
+  let R = state.rows, C = state.cols;
+
+  // symmetric padding with blue (false)
+  const pad = Math.max(0, state.buffer|0);
+  if(pad>0){
+    const newR = R + 2*pad, newC = C + 2*pad;
+    const padded = Array.from({length:newR}, ()=>Array.from({length:newC}, ()=>false)); // all water
+    for(let r=0;r<R;r++){
+      for(let c=0;c<C;c++){
+        padded[r+pad][c+pad] = G[r][c];
+      }
+    }
+    G = padded; R = newR; C = newC;
+  }
+
+  // swap/flip transforms
+  if(state.swap){
+    const T = Array.from({length:C}, ()=>Array.from({length:R},()=>false));
+    for(let r=0;r<R;r++) for(let c=0;c<C;c++) T[c][r]=G[r][c];
+    G=T; [R,C]=[C,R];
+  }
+  if(state.flipV) G = G.slice().reverse();
+  if(state.flipH) G = G.map(row=>row.slice().reverse());
+
+  return {G,rows:R,cols:C};
+}
+
+/* ---------- RLE helper ---------- */
+function rleRowText(rIndex){
+  const {G}=workingGrid();
+  const row=G[rIndex-1];
+  const out=[]; let cur=row[0], run=1;
+  for(let i=1;i<row.length;i++){
+    if(row[i]===cur) run++; else { out.push([run,cur]); cur=row[i]; run=1; }
+  }
+  out.push([run,cur]);
+  return out.map(([n,v])=>`${n} ${v?'green':'blue'}`).join(', ');
+}
+
+/* ---------- NEW: build typewriter sequence ---------- */
+function buildTypewriterSequence(){
+  const {G,rows,cols} = workingGrid();
+  const seq = [];
+  if(!rows || !cols) return seq;
+
+  const runEntry = (isGreen, count) => {
+    const key = isGreen ? "GREEN" : "BLUE";
+    const obj = {};
+    obj[key] = count;
+    return obj;
+  };
+
+  for(let r = 0; r < rows; r++){
+    const row = G[r];
+    let current = row[0];
+    let run = 1;
+
+    for(let c = 1; c < cols; c++){
+      if(row[c] === current){
+        run++;
+      } else {
+        seq.push(runEntry(current, run));
+        current = row[c];
+        run = 1;
+      }
+    }
+    // push final run for this row
+    seq.push(runEntry(current, run));
+
+    // add NEW_LINE between rows (not after last row)
+    if(r < rows - 1){
+      seq.push({ "NEW_LINE": 1 });
+    }
+  }
+
+  return seq;
+}
+
+function exportTypewriterSequence(){
+  const {rows,cols} = workingGrid();
+  if(!rows || !cols){
+    alert("Load a grid before exporting.");
+    return;
+  }
+
+  const sequence = buildTypewriterSequence();
+  const payload = {
+    metadata: {
+      generated_at: new Date().toISOString(),
+      rows,
+      cols,
+      buffer: state.buffer|0,
+      swap_rows_cols: !!state.swap,
+      flip_vertical: !!state.flipV,
+      flip_horizontal: !!state.flipH
+    },
+    typewriter_sequence: sequence
+  };
+
+  const jsonStr = JSON.stringify(payload, null, 2);
+  const blob = new Blob([jsonStr], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = "typewriter_sequence.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* ---------- rows panel ---------- */
+function renderRowsPanel(){
+  const {rows} = workingGrid();
+  const cont = els.rows;
+  cont.innerHTML = '';
+  if(!rows){
+    if(els.focusPanel) els.focusPanel.hidden = true;
+    return;
+  }
+  for(let r = 1; r <= rows; r++){
+    const div = document.createElement('div');
+    let cls = 'rowItem';
+    if(state.doneSet.has(r)) cls += ' done';
+    if(r === state.currentRow) cls += ' currentCard';
+    div.className = cls;
+    div.dataset.row = r;
+
+    const head = document.createElement('header');
+    const title = document.createElement('h3');
+    title.className = 'rowTitle';
+    title.textContent = `Row ${r}`;
+    head.appendChild(title);
+
+    const btns = document.createElement('div');
+    btns.className = 'rowBtns';
+
+    const focus = document.createElement('button');
+    focus.className = 'small';
+    focus.textContent = 'Focus';
+    focus.addEventListener('click', () => {
+      state.currentRow = r;
+      renderAll();
+      const canvas = document.querySelector('.canvasWrap');
+      if(canvas){
+        canvas.scrollTo({ top: Math.max(0, (r - 1) * state.cellSize - 200), behavior: 'smooth' });
+      }
+    });
+
+    const done = document.createElement('button');
+    done.className = 'small primary';
+    done.textContent = state.doneSet.has(r) ? 'Undo' : 'Done';
+    done.addEventListener('click', () => {
+      if(state.doneSet.has(r)) state.doneSet.delete(r);
+      else state.doneSet.add(r);
+      state.currentRow = r;
+      renderAll();
+    });
+
+    btns.appendChild(focus);
+    btns.appendChild(done);
+    head.appendChild(btns);
+    div.appendChild(head);
+
+    const p = document.createElement('div');
+    p.className = 'rle';
+    p.textContent = rleRowText(r);
+    div.appendChild(p);
+
+    div.addEventListener('click', (e) => {
+      if(e.target.tagName === 'BUTTON') return;
+      state.currentRow = r;
+      renderAll();
+    });
+
+    cont.appendChild(div);
+  }
+}
+
+function updateFocusRowDisplay(){
+  const {rows} = workingGrid();
+  if(!els.focusPanel) return;
+  if(!rows){
+    els.focusPanel.hidden = true;
+    return;
+  }
+  if(!state.currentRow || state.currentRow < 1) state.currentRow = 1;
+  if(state.currentRow > rows) state.currentRow = rows;
+
+  const r = state.currentRow;
+  els.focusPanel.hidden = false;
+  els.focusRowName.textContent = `Row ${r}`;
+  els.focusRowRle.textContent = rleRowText(r);
+  els.focusDoneBtn.textContent = state.doneSet.has(r) ? 'Undo row' : 'Mark row done';
+}
+
+function updateStats(){
+  const {rows,cols}=workingGrid();
+  const total=rows*cols, doneRows=state.doneSet.size, doneChars=doneRows*cols;
+  els.totalChars.textContent=prettyInt(total);
+  els.rowCount.textContent=prettyInt(rows);
+  els.doneRows.textContent=prettyInt(doneRows);
+  els.doneChars.textContent=prettyInt(doneChars);
+}
+
+function renderAll(){
+  renderSVG();
+  renderRowsPanel();
+  updateStats();
+  updateFocusRowDisplay();
+}
+
+function renderSVG(){
+  const {G,rows,cols} = workingGrid();
+  const svg=els.svg; while(svg.lastChild) svg.removeChild(svg.lastChild);
+
+  const padding= state.showLabels ? 36 : 10;
+  const cs = state.cellSize;
+  const w = cols*cs + padding*2;
+  const h = rows*cs + padding*2;
+  svg.setAttribute('viewBox',`0 0 ${w} ${h}`);
+  svg.setAttribute('width',w);
+  svg.setAttribute('height',h);
+
+  const g=workingGrid().G;
+
+  const bg=document.createElementNS('http://www.w3.org/2000/svg','rect');
+  bg.setAttribute('x',0); bg.setAttribute('y',0); bg.setAttribute('width',w); bg.setAttribute('height',h); bg.setAttribute('fill','#e5e7eb');
+  svg.appendChild(bg);
+
+  const gridGroup=document.createElementNS('http://www.w3.org/2000/svg','g');
+  gridGroup.setAttribute('transform',`translate(${padding},${padding})`);
+
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const cell=document.createElementNS('http://www.w3.org/2000/svg','rect');
+      cell.setAttribute('x',c*cs);
+      cell.setAttribute('y',r*cs);
+      cell.setAttribute('width',cs);
+      cell.setAttribute('height',cs);
+      cell.setAttribute('class','cell '+(g[r][c]?'green':'blue'));
+      if(state.doneSet.has(r+1)) cell.classList.add('rowBlur');
+      if(r+1===state.currentRow) cell.classList.add('currentRow');
+      gridGroup.appendChild(cell);
+    }
+  }
+
+  svg.appendChild(gridGroup);
+
+  if(state.showLabels){
+    const axisGroup=document.createElementNS('http://www.w3.org/2000/svg','g');
+
+    const rowBg=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    rowBg.setAttribute('class','axisBg');
+    rowBg.setAttribute('x',0);
+    rowBg.setAttribute('y',padding);
+    rowBg.setAttribute('width',padding-4);
+    rowBg.setAttribute('height',rows*cs);
+    axisGroup.appendChild(rowBg);
+
+    for(let r=0;r<rows;r++){
+      const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('class','axisLabel');
+      t.setAttribute('x',padding-10);
+      t.setAttribute('y',padding + r*cs + cs/2 + 3);
+      t.setAttribute('text-anchor','end');
+      t.textContent=r+1;
+      axisGroup.appendChild(t);
+    }
+
+    const colBg=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    colBg.setAttribute('class','axisBg');
+    colBg.setAttribute('x',padding);
+    colBg.setAttribute('y',0);
+    colBg.setAttribute('width',cols*cs);
+    colBg.setAttribute('height',padding-4);
+    axisGroup.appendChild(colBg);
+
+    for(let c=0;c<cols;c++){
+      const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('class','axisLabel');
+      t.setAttribute('x',padding + c*cs + cs/2);
+      t.setAttribute('y',padding-10);
+      t.setAttribute('text-anchor','middle');
+      t.textContent=c+1;
+      axisGroup.appendChild(t);
+    }
+
+    svg.appendChild(axisGroup);
+  }
+}
+
+/* ---------- UI bindings ---------- */
+els.swap.addEventListener('change',()=>{state.swap=els.swap.checked; renderAll();});
+els.flipV.addEventListener('change',()=>{state.flipV=els.flipV.checked; renderAll();});
+els.flipH.addEventListener('change',()=>{state.flipH=els.flipH.checked; renderAll();});
+els.labels.addEventListener('change',()=>{state.showLabels=els.labels.checked; renderAll();});
+els.buffer.addEventListener('change',()=>{state.buffer=parseInt(els.buffer.value||'0',10); renderAll();});
+els.cellSize.addEventListener('input',()=>{state.cellSize=parseInt(els.cellSize.value||'22',10); renderAll();});
+
+// Export button
+if(els.exportBtn){
+  els.exportBtn.addEventListener('click', exportTypewriterSequence);
+}
+
+// Hover info over SVG
+els.svg.addEventListener('mousemove',e=>{
+  const {rows,cols}=workingGrid(); if(!rows||!cols) return;
+  const rect=els.svg.getBoundingClientRect();
+  const padding = state.showLabels ? 36 : 10;
+  const cs=state.cellSize;
+  const x=e.clientX-rect.left-padding;
+  const y=e.clientY-rect.top-padding;
+  const c=Math.floor(x/cs)+1;
+  const r=Math.floor(y/cs)+1;
+  if(r>=1 && r<=rows && c>=1 && c<=cols){
+    els.hoverInfo.hidden=false;
+    els.hoverInfo.textContent=`Row ${r}, Col ${c} : ${rleRowText(r)}`;
+  } else {
+    els.hoverInfo.hidden=true;
+  }
+});
+els.svg.addEventListener('mouseleave',()=>{els.hoverInfo.hidden=true;});
+
+// Keyboard note
+els.keyNote.textContent='Tip: Use ↑/↓ to move between rows and Space to mark Done.';
+els.keyNote.hidden=false;
+
+// Initial render
+renderAll();
+
+// Keyboard shortcuts for navigation
+document.addEventListener('keydown',e=>{
+  const {rows}=workingGrid(); if(!rows) return;
+  if(e.code==='ArrowDown'){ e.preventDefault(); state.currentRow=Math.min(rows,state.currentRow+1); renderAll(); }
+  if(e.code==='ArrowUp'){ e.preventDefault(); state.currentRow=Math.max(1,state.currentRow-1); renderAll(); }
+  if(e.code==='Space'){ e.preventDefault(); if(state.doneSet.has(state.currentRow)) state.doneSet.delete(state.currentRow); else state.doneSet.add(state.currentRow); renderAll(); }
+});
+</script>
+</body>
+</html>
+

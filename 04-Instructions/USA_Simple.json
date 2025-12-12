@@ -1,0 +1,112 @@
+{
+  "metadata": {
+    "generated_at": "2025-11-25T02:01:45.829Z",
+    "rows": 9,
+    "cols": 31,
+    "buffer": 1,
+    "swap_rows_cols": false,
+    "flip_vertical": true,
+    "flip_horizontal": false
+  },
+  "typewriter_sequence": [
+    {
+      "BLUE": 31
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 17
+    },
+    {
+      "BLUE": 13
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 21
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 4
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 1
+    },
+    {
+      "GREEN": 26
+    },
+    {
+      "BLUE": 4
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 2
+    },
+    {
+      "GREEN": 23
+    },
+    {
+      "BLUE": 6
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 5
+    },
+    {
+      "GREEN": 19
+    },
+    {
+      "BLUE": 7
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 11
+    },
+    {
+      "GREEN": 8
+    },
+    {
+      "BLUE": 3
+    },
+    {
+      "GREEN": 1
+    },
+    {
+      "BLUE": 8
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 31
+    },
+    {
+      "NEW_LINE": 1
+    },
+    {
+      "BLUE": 31
+    }
+  ]
+}

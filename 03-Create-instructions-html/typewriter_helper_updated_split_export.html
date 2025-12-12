@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Typewriter Map Helper</title>
+
+<style>
+  :root{
+    --green:#4CAF50;
+    --blue:#4169E1;
+    --gridStroke:#9993;
+    --panel:#f7f7f9;
+    --accent:#0f766e;
+    --muted:#6b7280;
+    --split:#111;
+  }
+  html,body{height:100%;margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;color:#111}
+  body{display:flex;flex-direction:column;min-height:100%}
+  header{padding:10px 14px;border-bottom:1px solid #e5e7eb;background:#fff;position:sticky;top:0;z-index:1}
+  header h1{font-size:18px;margin:0}
+  header .sub{color:#555;font-size:13px}
+
+  .wrap{display:flex;flex:1;min-height:0}
+  #sidebar{width:420px;max-width:420px;min-width:320px;background:var(--panel);padding:12px 12px 18px 12px;overflow:auto;border-right:1px solid #e5e7eb}
+  #main{flex:1;min-width:0;display:flex;align-items:stretch;justify-content:stretch;background:#fff;overflow:hidden}
+  .canvasWrap{flex:1;min-width:0;min-height:0;padding:12px;box-sizing:border-box}
+  #svg{width:100%;height:100%;display:block;background:#fff;border:1px solid #e5e7eb;border-radius:12px}
+
+  .controls{display:grid;gap:12px}
+  .legend{display:flex;gap:10px;align-items:center;font-size:13px}
+  .swatch{width:14px;height:14px;border-radius:3px;border:1px solid #0002}
+  .swatch.green{background:var(--green)}
+  .swatch.blue{background:var(--blue)}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row{display:flex;gap:8px;align-items:center}
+  .switches{display:grid;gap:8px}
+
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px}
+  .stat span{display:block;font-size:12px;color:#374151}
+  .stat b{display:block;font-size:18px;margin-top:2px}
+
+  .section{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px}
+  .section h2{margin:0 0 8px 0;font-size:14px;color:#111}
+  .hint{font-size:12px;color:#555}
+
+  button{cursor:pointer;border-radius:10px;border:1px solid #cbd5e1;background:#fff;padding:8px 10px;font-size:14px}
+  button.primary{background:var(--accent);color:#fff;border-color:transparent}
+  button.small{padding:6px 8px;font-size:12px}
+  .btnRow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:6px 6px;border-bottom:1px solid #e5e7eb;vertical-align:top}
+  th{font-size:12px;color:#374151}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  .hoverBox{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,0.08);pointer-events:none}
+  .hoverWrap{position:relative;height:100%}
+
+  @media (max-width: 920px){
+    #sidebar{width:360px;max-width:360px}
+  }
+</style>
+
+</head>
+<body>
+<header>
+  <h1>Typewriter Map Helper</h1>
+  <div class="sub">Upload the grid GeoJSON from QGIS. Green = land (<b>mostly_overlap = True</b>), Blue = water.</div>
+</header>
+
+<div class="wrap">
+  <aside id="sidebar">
+    <div class="controls">
+      <div>
+        <label><b>1) Upload grid GeoJSON</b></label><br>
+        <input id="file" type="file" accept=".geojson,application/geo+json,application/json" />
+        <div class="legend" style="margin-top:8px">
+          <span class="swatch green"></span> Green (True)
+          <span class="swatch blue"></span> Blue (False)
+        </div>
+        <div class="hint" style="margin-top:6px">
+          Typewriter scale: <b>10 columns = 1 inch</b> (horizontal) and <b>6 rows = 1 inch</b> (vertical). Cells render with this aspect ratio.
+        </div>
+      </div>
+
+      <div class="grid">
+        <label>Buffer (cells, pads all sides with water)<br>
+          <input id="bufferCells" type="number" min="0" step="1" value="0" style="width:110px">
+        </label>
+        <label>Preview labels<br>
+          <select id="labelMode" style="width:160px">
+            <option value="off" selected>Off</option>
+            <option value="on">On</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="switches">
+        <label class="row"><input id="swapRC" type="checkbox"> Swap row and column</label>
+        <label class="row"><input id="flipV" type="checkbox" checked> Flip vertical (Row 1 at bottom)</label>
+        <label class="row"><input id="flipH" type="checkbox"> Flip horizontal (Col 1 at right)</label>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span>Total characters</span><b id="totalChars">—</b></div>
+        <div class="stat"><span>Rows</span><b id="rowCount">—</b></div>
+        <div class="stat"><span>Columns</span><b id="colCount">—</b></div>
+        <div class="stat"><span>Estimated size</span><b id="mapSize">—</b></div>
+      </div>
+
+      <div class="section">
+        <h2>Instruction file splitting</h2>
+
+        <div class="btnRow" style="margin-bottom:8px">
+          <button id="addV" class="small">Add vertical split</button>
+          <button id="rmV" class="small">Remove vertical split</button>
+          <span class="hint">Vertical parts: <b id="vParts">1</b></span>
+        </div>
+
+        <div class="btnRow" style="margin-bottom:10px">
+          <button id="addH" class="small">Add horizontal split</button>
+          <button id="rmH" class="small">Remove horizontal split</button>
+          <span class="hint">Horizontal parts: <b id="hParts">1</b></span>
+        </div>
+
+        <div class="hint" id="splitSummary">Load a grid to see the instruction sets.</div>
+
+        <div style="margin-top:10px; overflow:auto; max-height:260px">
+          <table>
+            <thead>
+              <tr>
+                <th>Set</th>
+                <th>Rows</th>
+                <th>Cols</th>
+                <th>Size</th>
+              </tr>
+            </thead>
+            <tbody id="setsTableBody">
+              <tr><td colspan="4" class="hint">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <button id="exportBtn" class="primary">Export instructions</button>
+
+      <div class="hint">
+        If you export more than one instruction set, this page creates a single <span class="mono">.zip</span>.
+      </div>
+      <div class="hint" id="zipNote" hidden>
+        Could not load JSZip. This page will export multiple <span class="mono">.json</span> files instead.
+      </div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div class="canvasWrap hoverWrap">
+      <svg id="svg" role="img" aria-label="Grid preview"></svg>
+      <div id="hoverInfo" class="hoverBox" hidden></div>
+    </div>
+  </main>
+</div>
+
+<!-- JSZip for multi-file exports -->
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" defer></script>
+
+<script>
+/* ---------- constants ---------- */
+const CELL_H = 1.6666666666666667; // cell height in "cell-width units" (typewriter: 10 cols/in, 6 rows/in)
+const COLS_PER_IN = 10;
+const ROWS_PER_IN = 6;
+
+/* ---------- state ---------- */
+const state = {
+  rows: 0,
+  cols: 0,
+  base: [],
+  keys: { row: "row", col: "col", bool: "mostly_overlap" },
+  swap: false,
+  flipV: true,
+  flipH: false,
+  buffer: 0,
+  showLabels: false,
+  vSplits: 0, // number of vertical split lines
+  hSplits: 0  // number of horizontal split lines
+};
+
+/* ---------- elements ---------- */
+const els = {
+  file: document.getElementById('file'),
+  swap: document.getElementById('swapRC'),
+  flipV: document.getElementById('flipV'),
+  flipH: document.getElementById('flipH'),
+  buffer: document.getElementById('bufferCells'),
+  labelMode: document.getElementById('labelMode'),
+  svg: document.getElementById('svg'),
+  hoverInfo: document.getElementById('hoverInfo'),
+  totalChars: document.getElementById('totalChars'),
+  rowCount: document.getElementById('rowCount'),
+  colCount: document.getElementById('colCount'),
+  mapSize: document.getElementById('mapSize'),
+  addV: document.getElementById('addV'),
+  rmV: document.getElementById('rmV'),
+  addH: document.getElementById('addH'),
+  rmH: document.getElementById('rmH'),
+  vParts: document.getElementById('vParts'),
+  hParts: document.getElementById('hParts'),
+  splitSummary: document.getElementById('splitSummary'),
+  setsBody: document.getElementById('setsTableBody'),
+  exportBtn: document.getElementById('exportBtn'),
+  zipNote: document.getElementById('zipNote')
+};
+
+function prettyInt(n){ return n.toLocaleString(); }
+function fmtIn(n){ return (Math.round(n * 100) / 100).toFixed(2); }
+
+/* ---------- file handling ---------- */
+els.file.addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if(!f) return;
+
+  const text = await f.text();
+  let gj;
+  try {
+    gj = JSON.parse(text);
+  } catch {
+    alert('Could not parse file as JSON.');
+    return;
+  }
+  prepareFromGeoJSON(gj);
+});
+
+/* ---------- helper: dynamic key detection ---------- */
+function detectKeys(features){
+  const candBool = ["mostly_overlap","is_land","land","value","bool","isTrue","is_true"];
+  const candRow = ["row","Row","ROW","r"];
+  const candCol = ["col","column","Col","c"];
+  const props = features[0]?.properties || {};
+  const pick = (arr) => arr.find(k => k in props) || arr[0];
+  return { bool: pick(candBool), row: pick(candRow), col: pick(candCol) };
+}
+
+function prepareFromGeoJSON(geojson){
+  const feats = (geojson.type === "FeatureCollection") ? geojson.features : [];
+  if(!feats.length) {
+    alert("No features in GeoJSON.");
+    return;
+  }
+
+  state.keys = detectKeys(feats);
+
+  let maxR = 0, maxC = 0;
+  for(const f of feats){
+    const p = f.properties || {};
+    maxR = Math.max(maxR, +p[state.keys.row] || 0);
+    maxC = Math.max(maxC, +p[state.keys.col] || 0);
+  }
+  state.rows = maxR;
+  state.cols = maxC;
+
+  const G = Array.from({length: state.rows}, () => Array.from({length: state.cols}, () => false));
+  for(const f of feats){
+    const p = f.properties || {};
+    const r = (+p[state.keys.row] || 0) - 1;
+    const c = (+p[state.keys.col] || 0) - 1;
+    if(r >= 0 && r < state.rows && c >= 0 && c < state.cols){
+      G[r][c] = !!p[state.keys.bool];
+    }
+  }
+
+  state.base = G;
+  renderAll();
+}
+
+/* ---------- padding + transforms ---------- */
+function workingGrid(){
+  let G = state.base.map(row => row.slice());
+  let R = state.rows, C = state.cols;
+
+  const pad = Math.max(0, state.buffer | 0);
+  if(pad > 0){
+    const newR = R + 2 * pad;
+    const newC = C + 2 * pad;
+    const padded = Array.from({length: newR}, () => Array.from({length: newC}, () => false));
+    for(let r = 0; r < R; r++) for(let c = 0; c < C; c++) padded[r + pad][c + pad] = G[r][c];
+    G = padded; R = newR; C = newC;
+  }
+
+  if(state.swap){
+    const T = Array.from({length: C}, () => Array.from({length: R}, () => false));
+    for(let r = 0; r < R; r++) for(let c = 0; c < C; c++) T[c][r] = G[r][c];
+    G = T; [R, C] = [C, R];
+  }
+  if(state.flipV) G = G.slice().reverse();
+  if(state.flipH) G = G.map(row => row.slice().reverse());
+
+  return { G, rows: R, cols: C };
+}
+
+/* ---------- splitting ---------- */
+function distribute(total, parts){
+  parts = Math.max(1, parts | 0);
+  const base = Math.floor(total / parts);
+  const rem = total % parts;
+  return Array.from({length: parts}, (_, i) => base + (i < rem ? 1 : 0));
+}
+
+function getSplitPlan(rows, cols){
+  const vParts = Math.max(1, state.vSplits + 1);
+  const hParts = Math.max(1, state.hSplits + 1);
+
+  const colSizes = distribute(cols, vParts);
+  const rowSizes = distribute(rows, hParts);
+
+  const colStarts = [0];
+  for(let i = 0; i < colSizes.length - 1; i++) colStarts.push(colStarts[i] + colSizes[i]);
+
+  const rowStarts = [0];
+  for(let i = 0; i < rowSizes.length - 1; i++) rowStarts.push(rowStarts[i] + rowSizes[i]);
+
+  const vBoundaries = [];
+  let accC = 0;
+  for(let i = 0; i < colSizes.length - 1; i++){ accC += colSizes[i]; vBoundaries.push(accC); }
+
+  const hBoundaries = [];
+  let accR = 0;
+  for(let i = 0; i < rowSizes.length - 1; i++){ accR += rowSizes[i]; hBoundaries.push(accR); }
+
+  return { vParts, hParts, colSizes, rowSizes, colStarts, rowStarts, vBoundaries, hBoundaries };
+}
+
+function tileSubgrid(G, r0, rCount, c0, cCount){
+  const out = [];
+  for(let r = r0; r < r0 + rCount; r++) out.push(G[r].slice(c0, c0 + cCount));
+  return out;
+}
+
+/* ---------- sequence building ---------- */
+function buildTypewriterSequenceFromGrid(grid){
+  const rows = grid.length;
+  const cols = rows ? grid[0].length : 0;
+  const seq = [];
+  if(!rows || !cols) return seq;
+
+  const runEntry = (isGreen, count) => {
+    const key = isGreen ? "GREEN" : "BLUE";
+    const obj = {};
+    obj[key] = count;
+    return obj;
+  };
+
+  for(let r = 0; r < rows; r++) {
+    const row = grid[r];
+    let current = row[0];
+    let run = 1;
+
+    for(let c = 1; c < cols; c++) {
+      if(row[c] === current) run++;
+      else {
+        seq.push(runEntry(current, run));
+        current = row[c];
+        run = 1;
+      }
+    }
+    seq.push(runEntry(current, run));
+    if(r < rows - 1) seq.push({ "NEW_LINE": 1 });
+  }
+  return seq;
+}
+
+/* ---------- UI: stats + sets table ---------- */
+function updateStatsAndSets(){
+  const { rows, cols } = workingGrid();
+  const total = rows * cols;
+
+  els.totalChars.textContent = rows && cols ? prettyInt(total) : '—';
+  els.rowCount.textContent = rows ? prettyInt(rows) : '—';
+  els.colCount.textContent = cols ? prettyInt(cols) : '—';
+
+  if(rows && cols){
+    const wIn = cols / COLS_PER_IN;
+    const hIn = rows / ROWS_PER_IN;
+    els.mapSize.textContent = `${fmtIn(wIn)} in × ${fmtIn(hIn)} in`;
+  } else {
+    els.mapSize.textContent = '—';
+  }
+
+  const plan = getSplitPlan(rows, cols);
+  els.vParts.textContent = String(plan.vParts);
+  els.hParts.textContent = String(plan.hParts);
+
+  if(!rows || !cols){
+    els.splitSummary.textContent = 'Load a grid to see the instruction sets.';
+    els.setsBody.innerHTML = '<tr><td colspan="4" class="hint">—</td></tr>';
+    return;
+  }
+
+  const setCount = plan.vParts * plan.hParts;
+  els.splitSummary.textContent = `This export will create ${setCount} instruction set${setCount===1?'':'s'} (${plan.hParts} row band${plan.hParts===1?'':'s'} × ${plan.vParts} column band${plan.vParts===1?'':'s'}).`;
+
+  const tbody = document.createElement('tbody');
+  for(let hr = 0; hr < plan.hParts; hr++) {
+    for(let vc = 0; vc < plan.vParts; vc++) {
+      const rCount = plan.rowSizes[hr];
+      const cCount = plan.colSizes[vc];
+
+      const tr = document.createElement('tr');
+      const setName = `R${hr+1}C${vc+1}`;
+      const size = `${fmtIn(cCount / COLS_PER_IN)} in × ${fmtIn(rCount / ROWS_PER_IN)} in`;
+
+      tr.innerHTML = `
+        <td class="mono">${setName}</td>
+        <td>${prettyInt(rCount)}</td>
+        <td>${prettyInt(cCount)}</td>
+        <td>${size}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  els.setsBody.replaceWith(tbody);
+  tbody.id = 'setsTableBody';
+  els.setsBody = tbody;
+}
+
+/* ---------- SVG rendering ---------- */
+function renderSVG(){
+  const svg = els.svg;
+  while(svg.lastChild) svg.removeChild(svg.lastChild);
+
+  const { G, rows, cols } = workingGrid();
+  if(!rows || !cols) {
+    svg.setAttribute('viewBox', '0 0 10 10');
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', 5);
+    t.setAttribute('y', 5);
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('dominant-baseline', 'middle');
+    t.setAttribute('fill', '#6b7280');
+    t.setAttribute('font-size', '0.9');
+    t.textContent = 'Load a grid to preview it.';
+    svg.appendChild(t);
+    return;
+  }
+
+  const plan = getSplitPlan(rows, cols);
+  const padding = state.showLabels ? 3.2 : 0.6; // in cell-width units
+  const gridW = cols;
+  const gridH = rows * CELL_H;
+  const vbW = gridW + padding * 2;
+  const vbH = gridH + padding * 2;
+
+  svg.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('x', 0);
+  bg.setAttribute('y', 0);
+  bg.setAttribute('width', vbW);
+  bg.setAttribute('height', vbH);
+  bg.setAttribute('fill', '#ffffff');
+  svg.appendChild(bg);
+
+  const gridGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  gridGroup.setAttribute('transform', `translate(${padding},${padding})`);
+  svg.appendChild(gridGroup);
+
+  const frag = document.createDocumentFragment();
+  const rootStyle = getComputedStyle(document.documentElement);
+  const green = rootStyle.getPropertyValue('--green').trim();
+  const blue = rootStyle.getPropertyValue('--blue').trim();
+  const stroke = rootStyle.getPropertyValue('--gridStroke').trim();
+  const splitColor = rootStyle.getPropertyValue('--split').trim();
+
+  for(let r = 0; r < rows; r++) {
+    for(let c = 0; c < cols; c++) {
+      const cell = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      cell.setAttribute('x', c);
+      cell.setAttribute('y', r * CELL_H);
+      cell.setAttribute('width', 1);
+      cell.setAttribute('height', CELL_H);
+      cell.setAttribute('fill', G[r][c] ? green : blue);
+      cell.setAttribute('stroke', stroke);
+      cell.setAttribute('stroke-width', 0.03);
+      frag.appendChild(cell);
+    }
+  }
+  gridGroup.appendChild(frag);
+
+  const outline = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  outline.setAttribute('x', 0);
+  outline.setAttribute('y', 0);
+  outline.setAttribute('width', gridW);
+  outline.setAttribute('height', gridH);
+  outline.setAttribute('fill', 'none');
+  outline.setAttribute('stroke', '#0003');
+  outline.setAttribute('stroke-width', 0.08);
+  gridGroup.appendChild(outline);
+
+  const lineGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  lineGroup.setAttribute('transform', `translate(${padding},${padding})`);
+  svg.appendChild(lineGroup);
+
+  for(const b of plan.vBoundaries) {
+    const x = b;
+    const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    ln.setAttribute('x1', x);
+    ln.setAttribute('y1', 0);
+    ln.setAttribute('x2', x);
+    ln.setAttribute('y2', gridH);
+    ln.setAttribute('stroke', splitColor);
+    ln.setAttribute('stroke-width', 0.14);
+    ln.setAttribute('opacity', 0.85);
+    lineGroup.appendChild(ln);
+  }
+
+  for(const b of plan.hBoundaries) {
+    const y = b * CELL_H;
+    const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    ln.setAttribute('x1', 0);
+    ln.setAttribute('y1', y);
+    ln.setAttribute('x2', gridW);
+    ln.setAttribute('y2', y);
+    ln.setAttribute('stroke', splitColor);
+    ln.setAttribute('stroke-width', 0.14);
+    ln.setAttribute('opacity', 0.85);
+    lineGroup.appendChild(ln);
+  }
+
+  if(state.showLabels) {
+    const axis = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    axis.setAttribute('fill', '#111');
+    axis.setAttribute('font-family', 'ui-monospace, Menlo, monospace');
+    axis.setAttribute('font-size', '0.7');
+
+    for(let r = 0; r < rows; r++) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', padding - 0.4);
+      t.setAttribute('y', padding + r * CELL_H + CELL_H * 0.62);
+      t.setAttribute('text-anchor', 'end');
+      t.textContent = String(r + 1);
+      axis.appendChild(t);
+    }
+
+    if(cols <= 120) {
+      for(let c = 0; c < cols; c++) {
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('x', padding + c + 0.5);
+        t.setAttribute('y', padding - 0.6);
+        t.setAttribute('text-anchor', 'middle');
+        t.textContent = String(c + 1);
+        axis.appendChild(t);
+      }
+    } else {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', padding);
+      t.setAttribute('y', padding - 0.6);
+      t.setAttribute('text-anchor', 'start');
+      t.textContent = 'Columns (labels hidden for large grids)';
+      axis.appendChild(t);
+    }
+
+    svg.appendChild(axis);
+  }
+}
+
+function renderAll(){
+  renderSVG();
+  updateStatsAndSets();
+}
+
+/* ---------- hover info (row/col under pointer) ---------- */
+function svgPoint(evt){
+  const pt = els.svg.createSVGPoint();
+  pt.x = evt.clientX;
+  pt.y = evt.clientY;
+  const ctm = els.svg.getScreenCTM();
+  if(!ctm) return null;
+  return pt.matrixTransform(ctm.inverse());
+}
+
+els.svg.addEventListener('mousemove', (e) => {
+  const { rows, cols } = workingGrid();
+  if(!rows || !cols) return;
+
+  const padding = state.showLabels ? 3.2 : 0.6;
+  const p = svgPoint(e);
+  if(!p) return;
+
+  const gx = p.x - padding;
+  const gy = p.y - padding;
+
+  const c = Math.floor(gx / 1) + 1;
+  const r = Math.floor(gy / CELL_H) + 1;
+
+  if(r >= 1 && r <= rows && c >= 1 && c <= cols) {
+    const { G } = workingGrid();
+    const isGreen = !!G[r-1][c-1];
+    els.hoverInfo.hidden = false;
+    els.hoverInfo.textContent = `Row ${r}, Col ${c} : ${isGreen ? 'green' : 'blue'}`;
+  } else {
+    els.hoverInfo.hidden = true;
+  }
+});
+
+els.svg.addEventListener('mouseleave', () => {
+  els.hoverInfo.hidden = true;
+});
+
+/* ---------- UI bindings ---------- */
+els.swap.addEventListener('change', () => { state.swap = els.swap.checked; renderAll(); });
+els.flipV.addEventListener('change', () => { state.flipV = els.flipV.checked; renderAll(); });
+els.flipH.addEventListener('change', () => { state.flipH = els.flipH.checked; renderAll(); });
+els.buffer.addEventListener('change', () => { state.buffer = parseInt(els.buffer.value || '0', 10); renderAll(); });
+
+els.labelMode.addEventListener('change', () => {
+  state.showLabels = (els.labelMode.value === 'on');
+  renderAll();
+});
+
+els.addV.addEventListener('click', () => { state.vSplits += 1; renderAll(); });
+els.rmV.addEventListener('click', () => { state.vSplits = Math.max(0, state.vSplits - 1); renderAll(); });
+els.addH.addEventListener('click', () => { state.hSplits += 1; renderAll(); });
+els.rmH.addEventListener('click', () => { state.hSplits = Math.max(0, state.hSplits - 1); renderAll(); });
+
+/* ---------- export ---------- */
+function sanitizeBaseName(name){
+  const cleaned = (name || '').trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9._-]/g, '');
+  return cleaned || 'typewriter_instructions';
+}
+
+async function exportInstructions(){
+  const { G, rows, cols } = workingGrid();
+  if(!rows || !cols){
+    alert('Load a grid before exporting.');
+    return;
+  }
+
+  const baseName = sanitizeBaseName(prompt('Name your export (base filename):', 'typewriter_instructions'));
+
+  const plan = getSplitPlan(rows, cols);
+  const setCount = plan.vParts * plan.hParts;
+
+  const overallMeta = {
+    generated_at: new Date().toISOString(),
+    overall_rows: rows,
+    overall_cols: cols,
+    overall_width_in: cols / COLS_PER_IN,
+    overall_height_in: rows / ROWS_PER_IN,
+    buffer: state.buffer | 0,
+    swap_rows_cols: !!state.swap,
+    flip_vertical: !!state.flipV,
+    flip_horizontal: !!state.flipH,
+    vertical_parts: plan.vParts,
+    horizontal_parts: plan.hParts
+  };
+
+  const makePayload = (grid, seg) => {
+    const seq = buildTypewriterSequenceFromGrid(grid);
+    return {
+      metadata: {
+        ...overallMeta,
+        segment: seg
+      },
+      typewriter_sequence: seq
+    };
+  };
+
+  if(setCount === 1){
+    const payload = makePayload(G, {
+      row_band: 1,
+      col_band: 1,
+      row_offset: 0,
+      col_offset: 0,
+      rows: rows,
+      cols: cols,
+      width_in: cols / COLS_PER_IN,
+      height_in: rows / ROWS_PER_IN
+    });
+
+    downloadBlob(JSON.stringify(payload, null, 2), `${baseName}.json`, 'application/json');
+    return;
+  }
+
+  const canZip = (typeof window.JSZip !== 'undefined');
+  if(!canZip){
+    els.zipNote.hidden = false;
+
+    for(let hr = 0; hr < plan.hParts; hr++) {
+      for(let vc = 0; vc < plan.vParts; vc++) {
+        const r0 = plan.rowStarts[hr];
+        const c0 = plan.colStarts[vc];
+        const rCount = plan.rowSizes[hr];
+        const cCount = plan.colSizes[vc];
+
+        const sub = tileSubgrid(G, r0, rCount, c0, cCount);
+        const seg = {
+          row_band: hr + 1,
+          col_band: vc + 1,
+          row_offset: r0,
+          col_offset: c0,
+          rows: rCount,
+          cols: cCount,
+          width_in: cCount / COLS_PER_IN,
+          height_in: rCount / ROWS_PER_IN
+        };
+        const payload = makePayload(sub, seg);
+        const fname = `${baseName}_R${hr+1}C${vc+1}_${rCount}x${cCount}.json`;
+        downloadBlob(JSON.stringify(payload, null, 2), fname, 'application/json');
+        await sleep(120);
+      }
+    }
+    return;
+  }
+
+  const zip = new window.JSZip();
+  for(let hr = 0; hr < plan.hParts; hr++) {
+    for(let vc = 0; vc < plan.vParts; vc++) {
+      const r0 = plan.rowStarts[hr];
+      const c0 = plan.colStarts[vc];
+      const rCount = plan.rowSizes[hr];
+      const cCount = plan.colSizes[vc];
+
+      const sub = tileSubgrid(G, r0, rCount, c0, cCount);
+      const seg = {
+        row_band: hr + 1,
+        col_band: vc + 1,
+        row_offset: r0,
+        col_offset: c0,
+        rows: rCount,
+        cols: cCount,
+        width_in: cCount / COLS_PER_IN,
+        height_in: rCount / ROWS_PER_IN
+      };
+      const payload = makePayload(sub, seg);
+      const fname = `${baseName}_R${hr+1}C${vc+1}_${rCount}x${cCount}.json`;
+      zip.file(fname, JSON.stringify(payload, null, 2));
+    }
+  }
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(zipBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${baseName}.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadBlob(text, filename, mime){
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function sleep(ms){ return new Promise(res => setTimeout(res, ms)); }
+
+els.exportBtn.addEventListener('click', exportInstructions);
+
+window.addEventListener('resize', () => renderSVG());
+
+// Initial render
+renderAll();
+</script>
+</body>
+</html>
