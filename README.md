@@ -1,7 +1,7 @@
 # Typewriter Maps
 
 ![Long Island Typewriter Map Banner](assets/images/typewriter-map-banner-long-island.jpg)
-_Placeholder banner image. Add your long horizontal final map here._
+_Long Island typewriter map._
 
 Typewriter Maps is a workflow for turning geographic map grids into physical typewriter drawings using a modified Smith-Corona Deville C/T and a Raspberry Pi-controlled servo rig.
 
@@ -67,7 +67,7 @@ Four metal-gear servos currently actuate:
 Ribbon usage is primarily blue/green, with occasional black/red. Reliability came from repeated calibration of servo angles and timing.
 
 ![Modified Typewriter with Servo Rig](assets/images/typewriter-servo-rig.jpg)
-_Placeholder hardware image. Add a photo of the modified typewriter and servo setup here._
+_Modified Smith-Corona Deville C/T with servo rig._
 
 ## Configuration
 
@@ -79,7 +79,4 @@ Use this file to manage key servo mappings, motion limits, and timing values tha
 
 ## License
 
-If you want others to use this project "as they please," a good default is **CC0-1.0** (public domain dedication) for maximum reuse with minimal restrictions.
-
-If you prefer a software-style license with warranty disclaimer while still being very permissive, use **MIT** instead.
-
+This project is licensed under the **MIT License**.
