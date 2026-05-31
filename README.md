@@ -11,7 +11,8 @@ This project started during Day 9 ("analog") of the 30 Day Map Challenge. After 
 
 1. Create a grid in QGIS using the Python geoprocessing script in `01-Scratch-QGIS/00-PythonScripts-Geoprocessing/`.
 2. Convert the grid/map output into machine-readable typing instructions using `03-Create-instructions-html/typewriter_helper_updated_split_export.html`.
-3. Move instruction files to the Raspberry Pi and execute them with the controller in `05-TypewriterController/`, using servos connected through an Adafruit Servo Bonnet.
+3. Map grid property values to typewriter actions: `BLUE`, `GREEN`, or `SPACE`.
+4. Move instruction files to the Raspberry Pi and execute them with the controller in `05-TypewriterController/`, using servos connected through an Adafruit Servo Bonnet.
 
 ## Repository Structure
 
@@ -38,13 +39,18 @@ This project started during Day 9 ("analog") of the 30 Day Map Challenge. After 
 ### 3) Instruction Generation
 
 - Open `03-Create-instructions-html/typewriter_helper_updated_split_export.html`.
-- Convert map/grid data into sequential typewriter instruction files.
+- Load a grid GeoJSON and choose the property field that should drive the typing instructions.
+- Map each field value to one of three actions:
+  - `BLUE`: print with the default ribbon color.
+  - `GREEN`: print with the correction/color-toggle path.
+  - `SPACE`: press the space bar to leave blank paper.
 - Save generated instruction sets into `04-Instructions/` as `.json` (or split/zipped collections for larger works).
 
 ### 4) Raspberry Pi Execution
 
-- Transfer generated instruction files from `04-Instructions/` to the Pi environment.
+- Transfer generated instruction files from `04-Instructions/` to the Pi environment, or pull the latest repository state on the Pi.
 - Run the controller from `05-TypewriterController/` to execute the sequence on hardware.
+- The controller supports `BLUE`, `GREEN`, `SPACE`, and `NEW_LINE` instruction steps.
 - Use the config in `05-TypewriterController/typewriter_config.txt` to tune motion parameters and channel mapping.
 
 ## Hardware Context

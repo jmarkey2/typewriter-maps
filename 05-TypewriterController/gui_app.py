@@ -53,6 +53,7 @@ class App(tk.Tk):
         self.preview_printed: List[List[bool]] = []
         self.preview_rects: List[List[int]] = []
         self.active_cell: Optional[Tuple[int, int]] = None
+        self.preview_grid_model: Optional[GridModel] = None
 
         # Load config from .txt (JSON)
         self.cfg, cfg_status = load_config(config_path)
@@ -163,6 +164,7 @@ class App(tk.Tk):
         self.preview_scroll_y = ttk.Scrollbar(self.preview_frame, orient="vertical", command=self.preview_canvas.yview)
         self.preview_scroll_x = ttk.Scrollbar(self.preview_frame, orient="horizontal", command=self.preview_canvas.xview)
         self.preview_canvas.configure(yscrollcommand=self.preview_scroll_y.set, xscrollcommand=self.preview_scroll_x.set)
+        self.preview_canvas.bind("<Configure>", self._on_preview_canvas_configure)
 
         self.preview_scroll_y.pack(side="right", fill="y")
         self.preview_scroll_x.pack(side="bottom", fill="x")
@@ -719,38 +721,70 @@ class App(tk.Tk):
         self.preview_printed = []
         self.preview_rects = []
         self.active_cell = None
+        self.preview_grid_model = None
 
-    def _draw_preview_grid(self, grid: GridModel) -> None:
-        self._clear_preview_canvas()
+    def _on_preview_canvas_configure(self, _event: tk.Event) -> None:
+        if self.preview_grid_model:
+            self._draw_preview_grid(self.preview_grid_model, preserve_printed=True)
+
+    def _draw_preview_grid(self, grid: GridModel, preserve_printed: bool = False) -> None:
+        previous_printed = self.preview_printed if preserve_printed else []
+        previous_active = self.active_cell if preserve_printed else None
+
+        self.preview_canvas.delete("all")
+        self.preview_grid_model = grid
 
         rows, cols = grid.rows, grid.cols
-        self.preview_printed = [[False for _ in range(cols)] for _ in range(rows)]
+        if (
+            preserve_printed
+            and len(previous_printed) == rows
+            and all(len(row) == cols for row in previous_printed)
+        ):
+            self.preview_printed = [row[:] for row in previous_printed]
+        else:
+            self.preview_printed = [[False for _ in range(cols)] for _ in range(rows)]
         self.preview_rects = [[-1 for _ in range(cols)] for _ in range(rows)]
+        self.active_cell = previous_active
 
-        cell = 14
-        pad = 1
+        canvas_w = max(1, self.preview_canvas.winfo_width())
+        canvas_h = max(1, self.preview_canvas.winfo_height())
+        margin = 8
+        available_w = max(1, canvas_w - (2 * margin))
+        available_h = max(1, canvas_h - (2 * margin))
 
-        width = cols * (cell + pad) + pad
-        height = rows * (cell + pad) + pad
+        cell_w = available_w / max(1, cols)
+        cell_h = available_h / max(1, rows)
+        cell = max(1.0, min(cell_w, cell_h))
+        grid_w = cell * cols
+        grid_h = cell * rows
+        x_start = max(margin, (canvas_w - grid_w) / 2)
+        y_start = max(margin, (canvas_h - grid_h) / 2)
+        outline = "#7a7a7a" if cell >= 4 else ""
+        outline_width = 1 if cell >= 4 else 0
 
-        self.preview_canvas.configure(scrollregion=(0, 0, width, height))
+        self.preview_canvas.configure(scrollregion=(0, 0, canvas_w, canvas_h))
 
         for r in range(rows):
             for c in range(cols):
-                x0 = pad + c * (cell + pad)
-                y0 = pad + r * (cell + pad)
-                x1 = x0 + cell
-                y1 = y0 + cell
-                fill = self._preview_cell_color(grid.cells[r][c], printed=False)
-                rect = self.preview_canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="#d0d0d0", width=1)
+                x0 = x_start + c * cell
+                y0 = y_start + r * cell
+                x1 = x_start + (c + 1) * cell
+                y1 = y_start + (r + 1) * cell
+                fill = self._preview_cell_color(grid.cells[r][c], printed=self.preview_printed[r][c])
+                rect = self.preview_canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline=outline, width=outline_width)
                 self.preview_rects[r][c] = rect
+
+        if self.active_cell is not None:
+            r, c = self.active_cell
+            if 0 <= r < rows and 0 <= c < cols:
+                self.preview_canvas.itemconfigure(self.preview_rects[r][c], outline="#111111", width=max(2, outline_width))
 
     def _preview_cell_color(self, v: int, printed: bool) -> str:
         if v == 1:
-            return "#b9c8d9" if printed else "#cfe3ff"
+            return "#557aa8" if printed else "#1765c1"
         if v == 2:
-            return "#bfcdbf" if printed else "#d6f5d6"
-        return "#e0e0e0" if printed else "#f0f0f0"
+            return "#5f8758" if printed else "#239a35"
+        return "#b8b8b8" if printed else "#f7f7f7"
 
     def _set_preview_cell_printed(self, r: int, c: int, printed: bool) -> None:
         plan = self.current_plan
@@ -772,7 +806,7 @@ class App(tk.Tk):
             r0, c0 = self.active_cell
             if 0 <= r0 < plan.preview_grid.rows and 0 <= c0 < plan.preview_grid.cols:
                 rect0 = self.preview_rects[r0][c0]
-                self.preview_canvas.itemconfigure(rect0, outline="#d0d0d0", width=1)
+                self.preview_canvas.itemconfigure(rect0, outline="#7a7a7a", width=1)
 
         self.active_cell = new_cell
 
@@ -781,9 +815,7 @@ class App(tk.Tk):
         r1, c1 = new_cell
         if 0 <= r1 < plan.preview_grid.rows and 0 <= c1 < plan.preview_grid.cols:
             rect1 = self.preview_rects[r1][c1]
-            self.preview_canvas.itemconfigure(rect1, outline="#404040", width=2)
-            self.preview_canvas.yview_moveto(max(0.0, min(1.0, (r1 / max(1, plan.preview_grid.rows)))))
-            self.preview_canvas.xview_moveto(max(0.0, min(1.0, (c1 / max(1, plan.preview_grid.cols)))))
+            self.preview_canvas.itemconfigure(rect1, outline="#111111", width=2)
 
     # -------- Execution --------
     def on_start(self) -> None:

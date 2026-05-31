@@ -11,6 +11,8 @@ CMD_NEW_LINE = "NEW_LINE"
 
 LEGACY_BLUE = "BLUE"
 LEGACY_GREEN = "GREEN"
+LEGACY_SPACE = "SPACE"
+LEGACY_SPACEBAR = "SPACEBAR"
 
 
 @dataclass
@@ -119,7 +121,7 @@ def parse_json_to_models(path: str) -> Tuple[Dict[str, Any], Optional[GridModel]
             steps.append(Step(CMD_PRINT_BLUE, value))
         elif cmd == LEGACY_GREEN:
             steps.append(Step(CMD_PRINT_GREEN, value))
-        elif cmd == CMD_SPACE or cmd == "SPACE":
+        elif cmd in (CMD_SPACE, LEGACY_SPACE, LEGACY_SPACEBAR):
             steps.append(Step(CMD_SPACE, value))
         elif cmd == "NEW_LINE":
             steps.append(Step(CMD_NEW_LINE, value))
@@ -143,7 +145,7 @@ def export_models_to_json(metadata: Dict[str, Any], grid_model: Optional[GridMod
         elif s.cmd == CMD_PRINT_GREEN:
             seq.append({LEGACY_GREEN: s.count})
         elif s.cmd == CMD_SPACE:
-            seq.append({"SPACE": s.count})
+            seq.append({LEGACY_SPACE: s.count})
         elif s.cmd == CMD_NEW_LINE:
             seq.append({"NEW_LINE": s.count})
         else:
@@ -177,6 +179,14 @@ def _safe_meta_int(loaded_json: Dict[str, Any], key: str) -> Optional[int]:
         return int(v)
     except Exception:
         return None
+
+
+def _safe_meta_int_any(loaded_json: Dict[str, Any], *keys: str) -> Optional[int]:
+    for key in keys:
+        value = _safe_meta_int(loaded_json, key)
+        if value is not None:
+            return value
+    return None
 
 
 def _find_green_runs(expanded_cmds: List[str]) -> List[Tuple[int, int]]:
@@ -246,8 +256,8 @@ def compile_runtime_plan(
                 expanded_cmds.append(cmd)
                 expanded_to_condensed.append(i)
 
-    meta_rows = _safe_meta_int(loaded_json, "rows")
-    meta_cols = _safe_meta_int(loaded_json, "cols")
+    meta_rows = _safe_meta_int_any(loaded_json, "rows", "overall_rows")
+    meta_cols = _safe_meta_int_any(loaded_json, "cols", "overall_cols")
 
     r = 0
     c = 0

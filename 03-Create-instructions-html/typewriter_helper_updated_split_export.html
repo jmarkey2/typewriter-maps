@@ -32,6 +32,7 @@
   .swatch{width:14px;height:14px;border-radius:3px;border:1px solid #0002}
   .swatch.green{background:var(--green)}
   .swatch.blue{background:var(--blue)}
+  .swatch.space{background:#fff;border-color:#9ca3af}
 
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .row{display:flex;gap:8px;align-items:center}
@@ -55,6 +56,9 @@
   th,td{text-align:left;padding:6px 6px;border-bottom:1px solid #e5e7eb;vertical-align:top}
   th{font-size:12px;color:#374151}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  select,input{font:inherit}
+  select{border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:6px 8px}
+  .mappingSelect{width:120px}
 
   .hoverBox{position:absolute;left:12px;bottom:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-size:12px;box-shadow:0 1px 2px rgba(15,23,42,0.08);pointer-events:none}
   .hoverWrap{position:relative;height:100%}
@@ -68,7 +72,7 @@
 <body>
 <header>
   <h1>Typewriter Map Helper</h1>
-  <div class="sub">Upload the grid GeoJSON from QGIS. Green = land (<b>mostly_overlap = True</b>), Blue = water.</div>
+  <div class="sub">Upload the grid GeoJSON from QGIS. Map any property values to Green, Blue, or Space.</div>
 </header>
 
 <div class="wrap">
@@ -78,8 +82,9 @@
         <label><b>1) Upload grid GeoJSON</b></label><br>
         <input id="file" type="file" accept=".geojson,application/geo+json,application/json" />
         <div class="legend" style="margin-top:8px">
-          <span class="swatch green"></span> Green (True)
-          <span class="swatch blue"></span> Blue (False)
+          <span class="swatch green"></span> Green
+          <span class="swatch blue"></span> Blue
+          <span class="swatch space"></span> Space
         </div>
         <div class="hint" style="margin-top:6px">
           Typewriter scale: <b>10 columns = 1 inch</b> (horizontal) and <b>6 rows = 1 inch</b> (vertical). Cells render with this aspect ratio.
@@ -87,7 +92,7 @@
       </div>
 
       <div class="grid">
-        <label>Buffer (cells, pads all sides with water)<br>
+        <label>Buffer (cells, pads all sides with blue)<br>
           <input id="bufferCells" type="number" min="0" step="1" value="0" style="width:110px">
         </label>
         <label>Preview labels<br>
@@ -102,6 +107,33 @@
         <label class="row"><input id="swapRC" type="checkbox"> Swap row and column</label>
         <label class="row"><input id="flipV" type="checkbox" checked> Flip vertical (Row 1 at bottom)</label>
         <label class="row"><input id="flipH" type="checkbox"> Flip horizontal (Col 1 at right)</label>
+      </div>
+
+      <div class="section">
+        <h2>Source field and instruction mapping</h2>
+        <label>GeoJSON property field<br>
+          <select id="instructionField" disabled style="width:100%">
+            <option>Load a GeoJSON first</option>
+          </select>
+        </label>
+
+        <div style="margin-top:10px; overflow:auto; max-height:260px">
+          <table>
+            <thead>
+              <tr>
+                <th>Value</th>
+                <th>Cells</th>
+                <th>Instruction</th>
+              </tr>
+            </thead>
+            <tbody id="mappingTableBody">
+              <tr><td colspan="3" class="hint">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="hint" id="mappingHint" style="margin-top:8px">
+          Existing two-color files still work with <span class="mono">mostly_overlap</span>.
+        </div>
       </div>
 
       <div class="stats">
@@ -172,13 +204,22 @@
 const CELL_H = 1.6666666666666667; // cell height in "cell-width units" (typewriter: 10 cols/in, 6 rows/in)
 const COLS_PER_IN = 10;
 const ROWS_PER_IN = 6;
+const INSTRUCTIONS = [
+  { key: "GREEN", label: "Green", color: "var(--green)" },
+  { key: "BLUE", label: "Blue", color: "var(--blue)" },
+  { key: "SPACE", label: "Space", color: "#ffffff" }
+];
 
 /* ---------- state ---------- */
 const state = {
   rows: 0,
   cols: 0,
   base: [],
-  keys: { row: "row", col: "col", bool: "mostly_overlap" },
+  features: [],
+  propertyNames: [],
+  valueMappings: {},
+  valueCounts: {},
+  keys: { row: "row", col: "col", instructionField: "mostly_overlap" },
   swap: false,
   flipV: true,
   flipH: false,
@@ -196,6 +237,9 @@ const els = {
   flipH: document.getElementById('flipH'),
   buffer: document.getElementById('bufferCells'),
   labelMode: document.getElementById('labelMode'),
+  instructionField: document.getElementById('instructionField'),
+  mappingBody: document.getElementById('mappingTableBody'),
+  mappingHint: document.getElementById('mappingHint'),
   svg: document.getElementById('svg'),
   hoverInfo: document.getElementById('hoverInfo'),
   totalChars: document.getElementById('totalChars'),
@@ -233,14 +277,151 @@ els.file.addEventListener('change', async e => {
   prepareFromGeoJSON(gj);
 });
 
-/* ---------- helper: dynamic key detection ---------- */
+/* ---------- helper: dynamic key detection + value mapping ---------- */
 function detectKeys(features){
-  const candBool = ["mostly_overlap","is_land","land","value","bool","isTrue","is_true"];
+  const candInstruction = ["type","mostly_overlap","is_land","land","value","bool","isTrue","is_true"];
   const candRow = ["row","Row","ROW","r"];
   const candCol = ["col","column","Col","c"];
   const props = features[0]?.properties || {};
   const pick = (arr) => arr.find(k => k in props) || arr[0];
-  return { bool: pick(candBool), row: pick(candRow), col: pick(candCol) };
+  return { instructionField: pick(candInstruction), row: pick(candRow), col: pick(candCol) };
+}
+
+function propertyNamesFromFeatures(features){
+  const names = new Set();
+  for(const f of features){
+    const p = f.properties || {};
+    for(const k of Object.keys(p)) names.add(k);
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+function valueKey(value){
+  if(value === null) return "null";
+  if(value === undefined) return "undefined";
+  return String(value);
+}
+
+function displayValue(value){
+  if(value === null) return "null";
+  if(value === undefined) return "undefined";
+  if(value === "") return "(empty string)";
+  return String(value);
+}
+
+function defaultInstructionForValue(value){
+  if(value === true) return "GREEN";
+  if(value === false) return "BLUE";
+  const v = String(value).trim().toLowerCase();
+  if(["land","true","1","yes","y","green"].includes(v)) return "GREEN";
+  if(["building","space","spacebar","blank","empty","white","none"].includes(v)) return "SPACE";
+  if(["water","false","0","no","n","blue"].includes(v)) return "BLUE";
+  return "BLUE";
+}
+
+function instructionLabel(key){
+  return INSTRUCTIONS.find(i => i.key === key)?.label || key;
+}
+
+function instructionFill(key){
+  if(key === "GREEN") return getComputedStyle(document.documentElement).getPropertyValue('--green').trim();
+  if(key === "BLUE") return getComputedStyle(document.documentElement).getPropertyValue('--blue').trim();
+  return "#ffffff";
+}
+
+function collectValueCounts(features, field){
+  const counts = new Map();
+  for(const f of features){
+    const p = f.properties || {};
+    const raw = p[field];
+    const key = valueKey(raw);
+    if(!counts.has(key)) counts.set(key, { value: raw, count: 0 });
+    counts.get(key).count += 1;
+  }
+  return Object.fromEntries(Array.from(counts.entries()).sort((a, b) => String(a[1].value).localeCompare(String(b[1].value))));
+}
+
+function resetMappingsForField(field){
+  state.valueCounts = collectValueCounts(state.features, field);
+  state.valueMappings = {};
+  for(const [key, info] of Object.entries(state.valueCounts)){
+    state.valueMappings[key] = defaultInstructionForValue(info.value);
+  }
+}
+
+function populateFieldSelect(){
+  els.instructionField.innerHTML = '';
+  for(const name of state.propertyNames){
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    els.instructionField.appendChild(opt);
+  }
+  els.instructionField.value = state.keys.instructionField;
+  els.instructionField.disabled = state.propertyNames.length === 0;
+}
+
+function renderMappingTable(){
+  const tbody = document.createElement('tbody');
+  tbody.id = 'mappingTableBody';
+
+  const entries = Object.entries(state.valueCounts);
+  if(!entries.length){
+    tbody.innerHTML = '<tr><td colspan="3" class="hint">No values found for this field.</td></tr>';
+  } else {
+    for(const [key, info] of entries){
+      const tr = document.createElement('tr');
+
+      const valueTd = document.createElement('td');
+      valueTd.className = 'mono';
+      valueTd.textContent = displayValue(info.value);
+
+      const countTd = document.createElement('td');
+      countTd.textContent = prettyInt(info.count);
+
+      const selectTd = document.createElement('td');
+      const select = document.createElement('select');
+      select.className = 'mappingSelect';
+      select.dataset.valueKey = key;
+      for(const inst of INSTRUCTIONS){
+        const opt = document.createElement('option');
+        opt.value = inst.key;
+        opt.textContent = inst.label;
+        select.appendChild(opt);
+      }
+      select.value = state.valueMappings[key] || 'BLUE';
+      select.addEventListener('change', () => {
+        state.valueMappings[key] = select.value;
+        rebuildBaseGrid();
+        renderAll();
+      });
+      selectTd.appendChild(select);
+
+      tr.append(valueTd, countTd, selectTd);
+      tbody.appendChild(tr);
+    }
+  }
+
+  els.mappingBody.replaceWith(tbody);
+  els.mappingBody = tbody;
+
+  const field = state.keys.instructionField || '—';
+  const summary = entries.map(([_, info]) => `${displayValue(info.value)}=${instructionLabel(state.valueMappings[valueKey(info.value)])}`).join(', ');
+  els.mappingHint.textContent = entries.length ? `Using ${field}: ${summary}` : 'Choose a field with values to map.';
+}
+
+function rebuildBaseGrid(){
+  const G = Array.from({length: state.rows}, () => Array.from({length: state.cols}, () => "BLUE"));
+  for(const f of state.features){
+    const p = f.properties || {};
+    const r = (+p[state.keys.row] || 0) - 1;
+    const c = (+p[state.keys.col] || 0) - 1;
+    if(r >= 0 && r < state.rows && c >= 0 && c < state.cols){
+      const key = valueKey(p[state.keys.instructionField]);
+      G[r][c] = state.valueMappings[key] || "BLUE";
+    }
+  }
+  state.base = G;
 }
 
 function prepareFromGeoJSON(geojson){
@@ -250,7 +431,12 @@ function prepareFromGeoJSON(geojson){
     return;
   }
 
+  state.features = feats;
   state.keys = detectKeys(feats);
+  state.propertyNames = propertyNamesFromFeatures(feats);
+  if(!state.propertyNames.includes(state.keys.instructionField)){
+    state.keys.instructionField = state.propertyNames[0] || "mostly_overlap";
+  }
 
   let maxR = 0, maxC = 0;
   for(const f of feats){
@@ -261,17 +447,10 @@ function prepareFromGeoJSON(geojson){
   state.rows = maxR;
   state.cols = maxC;
 
-  const G = Array.from({length: state.rows}, () => Array.from({length: state.cols}, () => false));
-  for(const f of feats){
-    const p = f.properties || {};
-    const r = (+p[state.keys.row] || 0) - 1;
-    const c = (+p[state.keys.col] || 0) - 1;
-    if(r >= 0 && r < state.rows && c >= 0 && c < state.cols){
-      G[r][c] = !!p[state.keys.bool];
-    }
-  }
-
-  state.base = G;
+  populateFieldSelect();
+  resetMappingsForField(state.keys.instructionField);
+  rebuildBaseGrid();
+  renderMappingTable();
   renderAll();
 }
 
@@ -284,13 +463,13 @@ function workingGrid(){
   if(pad > 0){
     const newR = R + 2 * pad;
     const newC = C + 2 * pad;
-    const padded = Array.from({length: newR}, () => Array.from({length: newC}, () => false));
+    const padded = Array.from({length: newR}, () => Array.from({length: newC}, () => "BLUE"));
     for(let r = 0; r < R; r++) for(let c = 0; c < C; c++) padded[r + pad][c + pad] = G[r][c];
     G = padded; R = newR; C = newC;
   }
 
   if(state.swap){
-    const T = Array.from({length: C}, () => Array.from({length: R}, () => false));
+    const T = Array.from({length: C}, () => Array.from({length: R}, () => "BLUE"));
     for(let r = 0; r < R; r++) for(let c = 0; c < C; c++) T[c][r] = G[r][c];
     G = T; [R, C] = [C, R];
   }
@@ -345,8 +524,8 @@ function buildTypewriterSequenceFromGrid(grid){
   const seq = [];
   if(!rows || !cols) return seq;
 
-  const runEntry = (isGreen, count) => {
-    const key = isGreen ? "GREEN" : "BLUE";
+  const runEntry = (instruction, count) => {
+    const key = INSTRUCTIONS.some(i => i.key === instruction) ? instruction : "BLUE";
     const obj = {};
     obj[key] = count;
     return obj;
@@ -472,8 +651,6 @@ function renderSVG(){
 
   const frag = document.createDocumentFragment();
   const rootStyle = getComputedStyle(document.documentElement);
-  const green = rootStyle.getPropertyValue('--green').trim();
-  const blue = rootStyle.getPropertyValue('--blue').trim();
   const stroke = rootStyle.getPropertyValue('--gridStroke').trim();
   const splitColor = rootStyle.getPropertyValue('--split').trim();
 
@@ -484,7 +661,7 @@ function renderSVG(){
       cell.setAttribute('y', r * CELL_H);
       cell.setAttribute('width', 1);
       cell.setAttribute('height', CELL_H);
-      cell.setAttribute('fill', G[r][c] ? green : blue);
+      cell.setAttribute('fill', instructionFill(G[r][c]));
       cell.setAttribute('stroke', stroke);
       cell.setAttribute('stroke-width', 0.03);
       frag.appendChild(cell);
@@ -600,9 +777,9 @@ els.svg.addEventListener('mousemove', (e) => {
 
   if(r >= 1 && r <= rows && c >= 1 && c <= cols) {
     const { G } = workingGrid();
-    const isGreen = !!G[r-1][c-1];
+    const instruction = G[r-1][c-1] || 'BLUE';
     els.hoverInfo.hidden = false;
-    els.hoverInfo.textContent = `Row ${r}, Col ${c} : ${isGreen ? 'green' : 'blue'}`;
+    els.hoverInfo.textContent = `Row ${r}, Col ${c} : ${instructionLabel(instruction).toLowerCase()}`;
   } else {
     els.hoverInfo.hidden = true;
   }
@@ -620,6 +797,14 @@ els.buffer.addEventListener('change', () => { state.buffer = parseInt(els.buffer
 
 els.labelMode.addEventListener('change', () => {
   state.showLabels = (els.labelMode.value === 'on');
+  renderAll();
+});
+
+els.instructionField.addEventListener('change', () => {
+  state.keys.instructionField = els.instructionField.value;
+  resetMappingsForField(state.keys.instructionField);
+  rebuildBaseGrid();
+  renderMappingTable();
   renderAll();
 });
 
@@ -658,6 +843,8 @@ async function exportInstructions(){
     swap_rows_cols: !!state.swap,
     flip_vertical: !!state.flipV,
     flip_horizontal: !!state.flipH,
+    instruction_field: state.keys.instructionField,
+    value_instruction_map: Object.fromEntries(Object.entries(state.valueCounts).map(([key, info]) => [displayValue(info.value), state.valueMappings[key] || "BLUE"])),
     vertical_parts: plan.vParts,
     horizontal_parts: plan.hParts
   };
