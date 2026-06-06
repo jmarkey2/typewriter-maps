@@ -53,6 +53,24 @@ This project started during Day 9 ("analog") of the 30 Day Map Challenge. After 
 - The controller supports `BLUE`, `GREEN`, `SPACE`, and `NEW_LINE` instruction steps.
 - Use the config in `05-TypewriterController/typewriter_config.txt` to tune motion parameters and channel mapping.
 
+### Controller GUI
+
+Start the controller from its directory so it can find `typewriter_config.txt`:
+
+```bash
+cd 05-TypewriterController
+python3 main.py
+```
+
+The GUI provides four tabs:
+
+- **Run** loads and executes the normal two-color instruction sequence.
+- **Fill** reuses the same loaded JSON file for a third-color pass. Return the carriage to the original top-left position, replace the ribbon, and start Fill. Every original `SPACE` cell is printed using the primary ribbon position and shown as black in the preview. Existing colored cells become positioning spaces.
+- **Edit** modifies grid cells or legacy instruction steps before execution.
+- **Settings** updates hardware channels, angles, timing, and primary ribbon color for the current session. The settings form scrolls on smaller Raspberry Pi displays, while its Apply and Reload buttons remain accessible.
+
+Fill plans preserve every `NEW_LINE`, retain leading and interior spaces needed for alignment, and omit trailing spacebar presses when Return can move directly to the next row. Rows without fill cells use only Return. If an instruction file contains no `SPACE` actions, Fill remains disabled because there is nothing to print.
+
 ## Hardware Context
 
 The current rig uses:

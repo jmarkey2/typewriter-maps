@@ -28,12 +28,13 @@ class Step:
 class GridModel:
     rows: int
     cols: int
-    cells: List[List[int]]  # 0=OFF, 1=BLUE, 2=GREEN
+    cells: List[List[int]]  # 0=OFF, 1=BLUE, 2=GREEN, 3=BLACK preview
 
-    def clamp(self) -> None:
+    def clamp(self, allow_preview_black: bool = False) -> None:
+        valid_values = (0, 1, 2, 3) if allow_preview_black else (0, 1, 2)
         for r in range(self.rows):
             for c in range(self.cols):
-                if self.cells[r][c] not in (0, 1, 2):
+                if self.cells[r][c] not in valid_values:
                     self.cells[r][c] = 0
 
 
@@ -92,6 +93,84 @@ def direct_print_cmd(cfg: Dict[str, Any]) -> str:
 
 def correction_print_cmd(cfg: Dict[str, Any]) -> str:
     return CMD_PRINT_BLUE if primary_ribbon_color(cfg) == RIBBON_GREEN else CMD_PRINT_GREEN
+
+
+def compile_fill_steps(
+    source_steps: List[Step],
+    cfg: Dict[str, Any],
+    loaded_json: Dict[str, Any],
+    grid_model: Optional[GridModel],
+) -> Tuple[List[Step], GridModel, int]:
+    """Build a third-color pass that prints only cells originally encoded as SPACE."""
+    rows: List[List[str]] = [[]]
+    for step in source_steps:
+        if step.cmd == CMD_NEW_LINE:
+            for _ in range(step.count):
+                rows.append([])
+            continue
+        rows[-1].extend([step.cmd] * step.count)
+
+    if rows and not rows[-1] and source_steps and source_steps[-1].cmd == CMD_NEW_LINE:
+        rows.pop()
+
+    meta_rows = _safe_meta_int_any(loaded_json, "rows", "overall_rows")
+    meta_cols = _safe_meta_int_any(loaded_json, "cols", "overall_cols")
+    preview_rows = max(grid_model.rows if grid_model else 0, len(rows), meta_rows or 0, 1)
+    preview_cols = max(
+        grid_model.cols if grid_model else 0,
+        max((len(row) for row in rows), default=0),
+        meta_cols or 0,
+        1,
+    )
+    preview_cells = [[0 for _ in range(preview_cols)] for _ in range(preview_rows)]
+
+    direct_cmd = direct_print_cmd(cfg)
+    fill_steps: List[Step] = []
+    fill_count = 0
+
+    def append_step(cmd: str, count: int = 1) -> None:
+        if count < 1:
+            return
+        if fill_steps and fill_steps[-1].cmd == cmd:
+            fill_steps[-1].count += count
+        else:
+            fill_steps.append(Step(cmd, count))
+
+    for row_index in range(preview_rows):
+        row = rows[row_index] if row_index < len(rows) else []
+        last_fill_col = -1
+        for col, cmd in enumerate(row):
+            if cmd == CMD_SPACE:
+                last_fill_col = col
+                if col < preview_cols:
+                    preview_cells[row_index][col] = 3
+                fill_count += 1
+
+        for cmd in row[: last_fill_col + 1]:
+            append_step(direct_cmd if cmd == CMD_SPACE else CMD_SPACE)
+        append_step(CMD_NEW_LINE)
+
+    return fill_steps, GridModel(preview_rows, preview_cols, preview_cells), fill_count
+
+
+def compile_fill_runtime_plan(
+    source_steps: List[Step],
+    cfg: Dict[str, Any],
+    loaded_json: Dict[str, Any],
+    grid_model: Optional[GridModel],
+) -> Tuple[List[Step], "RuntimePlan", int]:
+    fill_steps, preview_grid, fill_count = compile_fill_steps(
+        source_steps, cfg, loaded_json, grid_model
+    )
+    fill_cfg = {
+        **cfg,
+        "mode": {
+            **cfg.get("mode", {}),
+            "monochrome_enabled": False,
+        },
+    }
+    plan = compile_runtime_plan(fill_steps, fill_cfg, loaded_json, preview_grid)
+    return fill_steps, plan, fill_count
 
 
 def parse_json_to_models(path: str) -> Tuple[Dict[str, Any], Optional[GridModel], List[Step]]:
@@ -324,7 +403,7 @@ def compile_runtime_plan(
                 preview_cells[rr][cc] = 0
 
     preview_grid = GridModel(rows=preview_rows, cols=preview_cols, cells=preview_cells)
-    preview_grid.clamp()
+    preview_grid.clamp(allow_preview_black=True)
 
     t = cfg["timing"]
     press_time = float(t["PRESS_TIME"])

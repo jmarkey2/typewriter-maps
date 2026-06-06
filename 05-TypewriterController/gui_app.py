@@ -20,6 +20,7 @@ from models import (
     RuntimePlan,
     Step,
     compile_runtime_plan,
+    compile_fill_runtime_plan,
     export_models_to_json,
     format_hms,
     parse_json_to_models,
@@ -34,8 +35,12 @@ class App(tk.Tk):
         super().__init__()
 
         self.title("Typewriter Map Controller")
-        self.geometry("1200x760")
-        self.minsize(1100, 700)
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        window_width = max(320, min(1200, screen_width - 40))
+        window_height = max(320, min(760, screen_height - 80))
+        self.geometry(f"{window_width}x{window_height}")
+        self.minsize(min(700, window_width), min(400, window_height))
 
         self.msg_queue: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
 
@@ -51,6 +56,10 @@ class App(tk.Tk):
         self.steps: List[Step] = []
 
         self.current_plan: Optional[RuntimePlan] = None
+        self.fill_plan: Optional[RuntimePlan] = None
+        self.fill_steps: List[Step] = []
+        self.fill_count: int = 0
+        self.execution_mode = "run"
         self.done_expanded_count: int = 0
         self.performance_totals: Dict[str, float] = {}
         self.performance_counts: Dict[str, int] = {}
@@ -60,6 +69,12 @@ class App(tk.Tk):
         self.preview_rects: List[List[int]] = []
         self.active_cell: Optional[Tuple[int, int]] = None
         self.preview_grid_model: Optional[GridModel] = None
+
+        self.fill_preview_printed: List[List[bool]] = []
+        self.fill_preview_rects: List[List[int]] = []
+        self.fill_active_cell: Optional[Tuple[int, int]] = None
+        self.fill_preview_grid_model: Optional[GridModel] = None
+        self.fill_done_expanded_count: int = 0
 
         # Load config from .txt (JSON)
         self.cfg, cfg_status = load_config(config_path)
@@ -101,14 +116,17 @@ class App(tk.Tk):
         self.nb.pack(fill="both", expand=True, pady=(10, 0))
 
         self.tab_run = ttk.Frame(self.nb, padding=12)
+        self.tab_fill = ttk.Frame(self.nb, padding=12)
         self.tab_edit = ttk.Frame(self.nb, padding=12)
         self.tab_settings = ttk.Frame(self.nb, padding=12)
 
         self.nb.add(self.tab_run, text="Run")
+        self.nb.add(self.tab_fill, text="Fill")
         self.nb.add(self.tab_edit, text="Edit")
         self.nb.add(self.tab_settings, text="Settings")
 
         self._build_run_tab()
+        self._build_fill_tab()
         self._build_edit_tab()
         self._build_settings_tab()
 
@@ -200,6 +218,262 @@ class App(tk.Tk):
         self.tree.tag_configure("done", foreground="#777777")
         self.tree.tag_configure("active", background="#e7f0ff")
 
+    # -------- Fill tab --------
+    def _build_fill_tab(self) -> None:
+        row1 = ttk.Frame(self.tab_fill)
+        row1.pack(fill="x")
+
+        ttk.Button(row1, text="Load JSON...", command=self.on_load_json).pack(side="left")
+        self.fill_file_var = tk.StringVar(value="Uses the same JSON file as Run.")
+        ttk.Label(row1, textvariable=self.fill_file_var).pack(side="left", padx=(10, 0))
+
+        ctrl = ttk.Frame(row1)
+        ctrl.pack(side="right")
+        self.fill_btn_start = ttk.Button(ctrl, text="Start Fill", command=self.on_fill_start, state="disabled")
+        self.fill_btn_pause = ttk.Button(ctrl, text="Pause", command=self.on_fill_pause, state="disabled")
+        self.fill_btn_stop = ttk.Button(ctrl, text="Stop", command=self.on_fill_stop, state="disabled")
+        self.fill_btn_start.pack(side="left", padx=(0, 8))
+        self.fill_btn_pause.pack(side="left", padx=(0, 8))
+        self.fill_btn_stop.pack(side="left")
+
+        info = (
+            "Return the carriage to the original top-left start, install the third-color ribbon, then start Fill. "
+            "SPACE cells print with the primary ribbon position; existing colored cells are skipped."
+        )
+        ttk.Label(self.tab_fill, text=info, wraplength=1050).pack(fill="x", pady=(12, 8))
+
+        prog = ttk.Frame(self.tab_fill)
+        prog.pack(fill="x", pady=(6, 8))
+        self.fill_progress = ttk.Progressbar(prog, orient="horizontal", mode="determinate")
+        self.fill_progress.pack(fill="x")
+        self.fill_progress_text_var = tk.StringVar(value="Load a JSON file with SPACE cells.")
+        ttk.Label(prog, textvariable=self.fill_progress_text_var).pack(anchor="w", pady=(4, 0))
+        ttk.Button(prog, text="Reset spacebar to rest", command=self.on_reset_spacebar).pack(anchor="e", pady=(4, 0))
+
+        metrics = ttk.Labelframe(self.tab_fill, text="Fill counts (estimated from instructions)", padding=10)
+        metrics.pack(fill="x", pady=(8, 10))
+        self.fill_metrics_var = tk.StringVar(value="")
+        ttk.Label(metrics, textvariable=self.fill_metrics_var, justify="left").pack(anchor="w")
+
+        paned = ttk.Panedwindow(self.tab_fill, orient="horizontal")
+        paned.pack(fill="both", expand=True)
+
+        preview_frame = ttk.Labelframe(paned, text="Fill preview (third color shown in black)", padding=10)
+        paned.add(preview_frame, weight=2)
+        self.fill_preview_canvas = tk.Canvas(preview_frame, highlightthickness=0)
+        fill_scroll_y = ttk.Scrollbar(preview_frame, orient="vertical", command=self.fill_preview_canvas.yview)
+        fill_scroll_x = ttk.Scrollbar(preview_frame, orient="horizontal", command=self.fill_preview_canvas.xview)
+        self.fill_preview_canvas.configure(yscrollcommand=fill_scroll_y.set, xscrollcommand=fill_scroll_x.set)
+        self.fill_preview_canvas.bind("<Configure>", self._on_fill_preview_canvas_configure)
+        fill_scroll_y.pack(side="right", fill="y")
+        fill_scroll_x.pack(side="bottom", fill="x")
+        self.fill_preview_canvas.pack(side="left", fill="both", expand=True)
+
+        steps_frame = ttk.Labelframe(paned, text="Optimized fill steps", padding=10)
+        paned.add(steps_frame, weight=3)
+        cols = ("idx", "cmd", "count", "state")
+        self.fill_tree = ttk.Treeview(steps_frame, columns=cols, show="headings", selectmode="browse")
+        for column, heading, width, anchor in (
+            ("idx", "#", 60, "e"),
+            ("cmd", "Command", 220, "w"),
+            ("count", "Count", 100, "e"),
+            ("state", "State", 120, "w"),
+        ):
+            self.fill_tree.heading(column, text=heading)
+            self.fill_tree.column(column, width=width, anchor=anchor)
+        fill_tree_scroll = ttk.Scrollbar(steps_frame, orient="vertical", command=self.fill_tree.yview)
+        self.fill_tree.configure(yscrollcommand=fill_tree_scroll.set)
+        self.fill_tree.pack(side="left", fill="both", expand=True)
+        fill_tree_scroll.pack(side="right", fill="y")
+        self.fill_tree.tag_configure("done", foreground="#777777")
+        self.fill_tree.tag_configure("active", background="#e7f0ff")
+
+    def _rebuild_fill_plan(self) -> None:
+        if not hasattr(self, "fill_tree"):
+            return
+        self.fill_tree.delete(*self.fill_tree.get_children())
+        if not self.steps:
+            self.fill_plan = None
+            self.fill_steps = []
+            self.fill_count = 0
+            self.fill_btn_start.configure(state="disabled")
+            self.fill_progress.configure(value=0, maximum=1)
+            self.fill_progress_text_var.set("Load a JSON file with SPACE cells.")
+            self.fill_metrics_var.set("")
+            self._clear_fill_preview_canvas()
+            return
+
+        try:
+            fill_steps, plan, fill_count = compile_fill_runtime_plan(
+                self.steps, self.cfg, self.loaded_json, self.grid_model
+            )
+        except Exception as e:
+            self.fill_plan = None
+            self.fill_steps = []
+            self.fill_count = 0
+            self.fill_btn_start.configure(state="disabled")
+            self.fill_metrics_var.set(f"Could not compile fill plan.\n{e}")
+            self._clear_fill_preview_canvas()
+            return
+
+        self.fill_steps = fill_steps
+        self.fill_plan = plan
+        self.fill_count = fill_count
+        self.fill_done_expanded_count = 0
+        for i, step in enumerate(fill_steps):
+            self.fill_tree.insert("", "end", values=(i + 1, step.cmd, step.count, ""))
+        self.fill_progress.configure(value=0, maximum=max(1, len(plan.expanded_cmds)))
+        self.fill_btn_start.configure(state="normal" if fill_count > 0 and not self.is_running else "disabled")
+        self._draw_fill_preview_grid(plan.preview_grid)
+        self._refresh_fill_metrics_text()
+        self._update_fill_progress_text()
+
+    def _refresh_fill_metrics_text(self) -> None:
+        plan = self.fill_plan
+        if not plan:
+            self.fill_metrics_var.set("")
+            return
+        direct_color = "GREEN" if direct_print_cmd(self.cfg) == CMD_PRINT_GREEN else "BLUE"
+        if self.fill_count == 0:
+            self.fill_metrics_var.set("No SPACE cells were found. There is nothing to fill.")
+            return
+        self.fill_metrics_var.set(
+            f"Third-color characters: {self.fill_count} (shown as black)  "
+            f"Primary ribbon position: {direct_color}\n"
+            f"Movement: SPACEBAR={plan.actions['SPACES']}  RETURN={plan.actions['NEW_LINES']}  "
+            f"Estimated total time: {format_hms(plan.total_est_s)}"
+        )
+
+    def _clear_fill_preview_canvas(self) -> None:
+        self.fill_preview_canvas.delete("all")
+        self.fill_preview_printed = []
+        self.fill_preview_rects = []
+        self.fill_active_cell = None
+        self.fill_preview_grid_model = None
+
+    def _on_fill_preview_canvas_configure(self, _event: tk.Event) -> None:
+        if self.fill_preview_grid_model:
+            self._draw_fill_preview_grid(self.fill_preview_grid_model, preserve_printed=True)
+
+    def _draw_fill_preview_grid(self, grid: GridModel, preserve_printed: bool = False) -> None:
+        previous_printed = self.fill_preview_printed if preserve_printed else []
+        previous_active = self.fill_active_cell if preserve_printed else None
+        self.fill_preview_canvas.delete("all")
+        self.fill_preview_grid_model = grid
+        rows, cols = grid.rows, grid.cols
+        if preserve_printed and len(previous_printed) == rows and all(len(row) == cols for row in previous_printed):
+            self.fill_preview_printed = [row[:] for row in previous_printed]
+        else:
+            self.fill_preview_printed = [[False for _ in range(cols)] for _ in range(rows)]
+        self.fill_preview_rects = [[-1 for _ in range(cols)] for _ in range(rows)]
+        self.fill_active_cell = previous_active
+
+        canvas_w = max(1, self.fill_preview_canvas.winfo_width())
+        canvas_h = max(1, self.fill_preview_canvas.winfo_height())
+        margin = 8
+        cell = max(1.0, min((canvas_w - 2 * margin) / max(1, cols), (canvas_h - 2 * margin) / max(1, rows)))
+        grid_w = cell * cols
+        grid_h = cell * rows
+        x_start = max(margin, (canvas_w - grid_w) / 2)
+        y_start = max(margin, (canvas_h - grid_h) / 2)
+        outline = "#7a7a7a" if cell >= 4 else ""
+        outline_width = 1 if cell >= 4 else 0
+        self.fill_preview_canvas.configure(scrollregion=(0, 0, canvas_w, canvas_h))
+
+        for r in range(rows):
+            for c in range(cols):
+                x0 = x_start + c * cell
+                y0 = y_start + r * cell
+                x1 = x_start + (c + 1) * cell
+                y1 = y_start + (r + 1) * cell
+                is_fill = grid.cells[r][c] == 3
+                fill = "#777777" if is_fill and self.fill_preview_printed[r][c] else "#111111" if is_fill else "#f7f7f7"
+                rect = self.fill_preview_canvas.create_rectangle(
+                    x0, y0, x1, y1, fill=fill, outline=outline, width=outline_width
+                )
+                self.fill_preview_rects[r][c] = rect
+
+        if self.fill_active_cell is not None:
+            self._set_fill_active_cell_outline(self.fill_active_cell)
+
+    def _set_fill_active_cell_outline(self, new_cell: Optional[Tuple[int, int]]) -> None:
+        plan = self.fill_plan
+        if not plan:
+            return
+        if self.fill_active_cell is not None:
+            r0, c0 = self.fill_active_cell
+            if 0 <= r0 < plan.preview_grid.rows and 0 <= c0 < plan.preview_grid.cols:
+                self.fill_preview_canvas.itemconfigure(self.fill_preview_rects[r0][c0], outline="#7a7a7a", width=1)
+        self.fill_active_cell = new_cell
+        if new_cell is not None:
+            r1, c1 = new_cell
+            if 0 <= r1 < plan.preview_grid.rows and 0 <= c1 < plan.preview_grid.cols:
+                self.fill_preview_canvas.itemconfigure(self.fill_preview_rects[r1][c1], outline="#d00000", width=2)
+
+    def _update_fill_progress_text(self) -> None:
+        plan = self.fill_plan
+        if not plan:
+            self.fill_progress_text_var.set("Load a JSON file with SPACE cells.")
+            return
+        total = max(1, len(plan.expanded_cmds))
+        done = max(0, min(self.fill_done_expanded_count, total))
+        remaining = max(0.0, plan.total_est_s - plan.prefix_s[min(done, len(plan.prefix_s) - 1)])
+        if self.fill_count == 0:
+            self.fill_progress_text_var.set("No SPACE cells found; Fill is disabled.")
+        else:
+            self.fill_progress_text_var.set(
+                f"{(done / total) * 100:5.1f}% complete.  Estimated remaining: {format_hms(remaining)}  "
+                f"Estimated total: {format_hms(plan.total_est_s)}"
+            )
+
+    def on_fill_start(self) -> None:
+        if self.is_running:
+            return
+        self._rebuild_fill_plan()
+        if not self.fill_plan or self.fill_count == 0:
+            messagebox.showinfo("Nothing to fill", "This JSON file does not contain any SPACE cells.")
+            return
+        if not HAS_BONNET:
+            messagebox.showwarning(
+                "Bonnet not available",
+                "This system cannot access the Adafruit Servo Bonnet. Run on a Raspberry Pi with adafruit_servokit installed.",
+            )
+            return
+
+        self.execution_mode = "fill"
+        self.fill_done_expanded_count = 0
+        self.fill_progress.configure(value=0, maximum=max(1, len(self.fill_plan.expanded_cmds)))
+        self._draw_fill_preview_grid(self.fill_plan.preview_grid)
+        self._update_fill_progress_text()
+        self.stop_event.clear()
+        self.run_event.set()
+        self.is_running = True
+        self.fill_btn_start.configure(state="disabled")
+        self.fill_btn_pause.configure(state="normal", text="Pause")
+        self.fill_btn_stop.configure(state="normal")
+        self.btn_start.configure(state="disabled")
+        self.worker_thread = threading.Thread(target=self._worker_run, args=(self.fill_plan,), daemon=True)
+        self.worker_thread.start()
+
+    def on_fill_pause(self) -> None:
+        if not self.is_running or self.execution_mode != "fill":
+            return
+        if self.run_event.is_set():
+            self.run_event.clear()
+            self.fill_btn_pause.configure(text="Resume")
+            self.status_var.set("Fill paused.")
+        else:
+            self.run_event.set()
+            self.fill_btn_pause.configure(text="Pause")
+            self.status_var.set("Fill running.")
+
+    def on_fill_stop(self) -> None:
+        if not self.is_running or self.execution_mode != "fill":
+            return
+        self.stop_event.set()
+        self.run_event.set()
+        self.status_var.set("Stopping fill...")
+
     def _sync_mono(self) -> None:
         self.cfg["mode"]["monochrome_enabled"] = bool(self.mono_enabled.get())
         self.cfg["mode"]["monochrome_color"] = str(self.mono_color.get())
@@ -215,6 +489,7 @@ class App(tk.Tk):
                 self._rebuild_grid_editor()
 
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
 
     # -------- Edit tab --------
     def _build_edit_tab(self) -> None:
@@ -304,6 +579,7 @@ class App(tk.Tk):
         self._refresh_step_editor()
         self._refresh_steps_view()
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
 
     def _delete_step(self) -> None:
         if self.is_running:
@@ -316,6 +592,7 @@ class App(tk.Tk):
         self._refresh_step_editor()
         self._refresh_steps_view()
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
 
     def _move_step(self, delta: int) -> None:
         if self.is_running:
@@ -331,6 +608,7 @@ class App(tk.Tk):
         self._refresh_step_editor()
         self._refresh_steps_view()
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
         item = self.edit_tree.get_children()[j]
         self.edit_tree.selection_set(item)
         self.edit_tree.see(item)
@@ -378,6 +656,7 @@ class App(tk.Tk):
             self._refresh_step_editor()
             self._refresh_steps_view()
             self._rebuild_preview_and_counts()
+            self._rebuild_fill_plan()
             dialog.destroy()
 
         btns = ttk.Frame(dialog)
@@ -509,20 +788,47 @@ class App(tk.Tk):
         self.steps = rle_compile_grid_to_steps(self.grid_model)
         self._refresh_steps_view()
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
         self.status_var.set("Recompiled steps from grid.")
 
     # -------- Settings tab --------
     def _build_settings_tab(self) -> None:
-        ttk.Label(self.tab_settings, text="Hardware settings", style="Header.TLabel").pack(anchor="w", pady=(0, 10))
+        btns = ttk.Frame(self.tab_settings)
+        btns.pack(side="bottom", fill="x", pady=(12, 0))
+        ttk.Button(btns, text="Apply Settings", command=self.on_apply_settings).pack(side="left")
+        ttk.Button(btns, text="Reload Config File", command=self.on_reload_config).pack(side="left", padx=(8, 0))
+
+        scroll_area = ttk.Frame(self.tab_settings)
+        scroll_area.pack(fill="both", expand=True)
+
+        settings_canvas = tk.Canvas(scroll_area, highlightthickness=0)
+        settings_scrollbar = ttk.Scrollbar(scroll_area, orient="vertical", command=settings_canvas.yview)
+        settings_canvas.configure(yscrollcommand=settings_scrollbar.set)
+        settings_scrollbar.pack(side="right", fill="y")
+        settings_canvas.pack(side="left", fill="both", expand=True)
+
+        settings_content = ttk.Frame(settings_canvas)
+        settings_window = settings_canvas.create_window((0, 0), window=settings_content, anchor="nw")
+
+        def update_scroll_region(_event: tk.Event) -> None:
+            settings_canvas.configure(scrollregion=settings_canvas.bbox("all"))
+
+        def fit_content_width(event: tk.Event) -> None:
+            settings_canvas.itemconfigure(settings_window, width=event.width)
+
+        settings_content.bind("<Configure>", update_scroll_region)
+        settings_canvas.bind("<Configure>", fit_content_width)
+
+        ttk.Label(settings_content, text="Hardware settings", style="Header.TLabel").pack(anchor="w", pady=(0, 10))
 
         info = (
             "These settings update channels, angles, and timing for this session.\n"
             "Edit typewriter_config.txt for persistent changes.\n"
             "Stop the job before changing settings."
         )
-        ttk.Label(self.tab_settings, text=info).pack(anchor="w", pady=(0, 12))
+        ttk.Label(settings_content, text=info).pack(anchor="w", pady=(0, 12))
 
-        wrap = ttk.Frame(self.tab_settings)
+        wrap = ttk.Frame(settings_content)
         wrap.pack(fill="both", expand=True)
 
         left = ttk.Labelframe(wrap, text="Channels (bonnet)", padding=10)
@@ -553,7 +859,7 @@ class App(tk.Tk):
         for i, k in enumerate(timing.keys()):
             add_field(right, f"timing.{k}", timing[k], i)
 
-        mode_box = ttk.Labelframe(self.tab_settings, text="Mode", padding=10)
+        mode_box = ttk.Labelframe(settings_content, text="Mode", padding=10)
         mode_box.pack(fill="x", pady=(12, 0))
         self.primary_ribbon_color = tk.StringVar(
             value=normalize_ribbon_color(self.cfg["mode"].get("primary_ribbon_color", "BLUE"))
@@ -567,15 +873,13 @@ class App(tk.Tk):
             state="readonly",
         ).pack(side="left", padx=(8, 0))
 
-        btns = ttk.Frame(self.tab_settings)
-        btns.pack(fill="x", pady=(12, 0))
-        ttk.Button(btns, text="Apply Settings", command=self.on_apply_settings).pack(side="left")
-        ttk.Button(btns, text="Reload Config File", command=self.on_reload_config).pack(side="left", padx=(8, 0))
-
-
-        self.sim_label = ttk.Label(btns, text="")
-        self.sim_label.pack(side="right")
-        self.sim_label.configure(text="Bonnet library available." if HAS_BONNET else "Bonnet library not available. UI runs in simulation mode.")
+        self.sim_label = ttk.Label(settings_content, text="")
+        self.sim_label.pack(anchor="w", pady=(12, 0))
+        self.sim_label.configure(
+            text="Bonnet library available."
+            if HAS_BONNET
+            else "Bonnet library not available. UI runs in simulation mode."
+        )
 
     def on_apply_settings(self) -> None:
         if self.is_running:
@@ -598,6 +902,7 @@ class App(tk.Tk):
 
         self.status_var.set("Settings applied.")
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
     
     def on_reload_config(self) -> None:
         """
@@ -642,6 +947,7 @@ class App(tk.Tk):
 
         # Rebuild preview and timing estimates using the new cfg
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
 
         self.status_var.set(status)
 
@@ -666,6 +972,7 @@ class App(tk.Tk):
             return
 
         self.loaded_path = path
+        self.fill_file_var.set(path)
         self.loaded_json = data
         self.grid_model = grid
         self.steps = steps
@@ -678,6 +985,7 @@ class App(tk.Tk):
         self._refresh_steps_view()
         self._render_edit_tab()
         self._rebuild_preview_and_counts()
+        self._rebuild_fill_plan()
 
         self.btn_start.configure(state="normal")
         self.btn_pause.configure(state="disabled")
@@ -847,6 +1155,7 @@ class App(tk.Tk):
             messagebox.showerror("Plan error", f"Could not compile runtime plan.\n\n{e}")
             return
 
+        self.execution_mode = "run"
         self.current_plan = plan
         self.done_expanded_count = 0
         self._reset_performance_estimator()
@@ -862,12 +1171,13 @@ class App(tk.Tk):
         self.btn_start.configure(state="disabled")
         self.btn_pause.configure(state="normal", text="Pause")
         self.btn_stop.configure(state="normal")
+        self.fill_btn_start.configure(state="disabled")
 
         self.worker_thread = threading.Thread(target=self._worker_run, args=(plan,), daemon=True)
         self.worker_thread.start()
 
     def on_pause(self) -> None:
-        if not self.is_running:
+        if not self.is_running or self.execution_mode != "run":
             return
         if self.run_event.is_set():
             self.run_event.clear()
@@ -879,7 +1189,7 @@ class App(tk.Tk):
             self.status_var.set("Running.")
 
     def on_stop(self) -> None:
-        if not self.is_running:
+        if not self.is_running or self.execution_mode != "run":
             return
         self.stop_event.set()
         self.run_event.set()
@@ -1004,27 +1314,47 @@ class App(tk.Tk):
 
                 elif msg == "active_expanded":
                     expanded_idx = int(payload)
-                    self._mark_active_from_expanded(expanded_idx)
-                    self._highlight_active_cell(expanded_idx)
+                    if self.execution_mode == "fill":
+                        self._mark_fill_active_from_expanded(expanded_idx)
+                        self._highlight_fill_active_cell(expanded_idx)
+                    else:
+                        self._mark_active_from_expanded(expanded_idx)
+                        self._highlight_active_cell(expanded_idx)
 
                 elif msg == "progress_expanded_done":
                     done = int(payload)
-                    self.done_expanded_count = done
-                    self.progress.configure(value=done)
-                    self._mark_done_from_expanded(done - 1)
-                    self._grey_printed_cell(done - 1)
-                    self._update_progress_text()
+                    if self.execution_mode == "fill":
+                        self.fill_done_expanded_count = done
+                        self.fill_progress.configure(value=done)
+                        self._mark_fill_done_from_expanded(done - 1)
+                        self._grey_fill_printed_cell(done - 1)
+                        self._update_fill_progress_text()
+                    else:
+                        self.done_expanded_count = done
+                        self.progress.configure(value=done)
+                        self._mark_done_from_expanded(done - 1)
+                        self._grey_printed_cell(done - 1)
+                        self._update_progress_text()
 
-                elif msg == "perf_action":
+                elif msg == "perf_action" and self.execution_mode == "run":
                     category, elapsed_s = payload
                     self._record_performance_action(str(category), float(elapsed_s))
 
                 elif msg == "finished":
+                    completed_mode = self.execution_mode
                     self.is_running = False
                     self.btn_start.configure(state="normal" if self.steps else "disabled")
                     self.btn_pause.configure(state="disabled", text="Pause")
                     self.btn_stop.configure(state="disabled")
-                    self._set_active_cell_outline(None)
+                    self.fill_btn_start.configure(
+                        state="normal" if self.fill_count > 0 else "disabled"
+                    )
+                    self.fill_btn_pause.configure(state="disabled", text="Pause")
+                    self.fill_btn_stop.configure(state="disabled")
+                    if completed_mode == "fill":
+                        self._set_fill_active_cell_outline(None)
+                    else:
+                        self._set_active_cell_outline(None)
 
         except queue.Empty:
             pass
@@ -1102,6 +1432,64 @@ class App(tk.Tk):
         r, c = rc
         self._set_preview_cell_printed(r, c, True)
 
+    def _mark_fill_active_from_expanded(self, expanded_idx: int) -> None:
+        plan = self.fill_plan
+        if not plan or not (0 <= expanded_idx < len(plan.expanded_to_condensed)):
+            return
+        self._set_fill_tree_active(plan.expanded_to_condensed[expanded_idx])
+
+    def _mark_fill_done_from_expanded(self, expanded_idx: int) -> None:
+        plan = self.fill_plan
+        if not plan or not (0 <= expanded_idx < len(plan.expanded_to_condensed)):
+            return
+        step_idx = plan.expanded_to_condensed[expanded_idx]
+        items = self.fill_tree.get_children()
+        if not (0 <= step_idx < len(items)):
+            return
+        item = items[step_idx]
+        tags = set(self.fill_tree.item(item, "tags"))
+        tags.add("done")
+        self.fill_tree.set(item, "state", "Done")
+        self.fill_tree.item(item, tags=tuple(tags))
+
+    def _set_fill_tree_active(self, step_idx: int) -> None:
+        items = self.fill_tree.get_children()
+        if not items or not (0 <= step_idx < len(items)):
+            return
+        for item in items:
+            tags = set(self.fill_tree.item(item, "tags"))
+            if "active" in tags:
+                tags.remove("active")
+                self.fill_tree.item(item, tags=tuple(tags))
+                if self.fill_tree.set(item, "state") == "Active":
+                    self.fill_tree.set(item, "state", "")
+        item = items[step_idx]
+        tags = set(self.fill_tree.item(item, "tags"))
+        tags.add("active")
+        self.fill_tree.set(item, "state", "Active")
+        self.fill_tree.item(item, tags=tuple(tags))
+        self.fill_tree.see(item)
+
+    def _highlight_fill_active_cell(self, expanded_idx: int) -> None:
+        plan = self.fill_plan
+        if not plan or not (0 <= expanded_idx < len(plan.cell_by_expanded)):
+            self._set_fill_active_cell_outline(None)
+            return
+        self._set_fill_active_cell_outline(plan.cell_by_expanded[expanded_idx])
+
+    def _grey_fill_printed_cell(self, expanded_idx: int) -> None:
+        plan = self.fill_plan
+        if not plan or not (0 <= expanded_idx < len(plan.cell_by_expanded)):
+            return
+        rc = plan.cell_by_expanded[expanded_idx]
+        if rc is None:
+            return
+        r, c = rc
+        if plan.preview_grid.cells[r][c] != 3:
+            return
+        self.fill_preview_printed[r][c] = True
+        self.fill_preview_canvas.itemconfigure(self.fill_preview_rects[r][c], fill="#777777")
+
     def _reset_performance_estimator(self) -> None:
         self.performance_totals = {}
         self.performance_counts = {}
@@ -1153,8 +1541,8 @@ class App(tk.Tk):
         counts = {
             "DIRECT_CHAR": direct_chars,
             "CORRECTION_CHAR": correction_chars,
-            "SPACE": int(plan.actions["SPACES"]),
-            "NEW_LINE": int(plan.actions["NEW_LINES"]),
+            "SPACE": int(plan.actions['SPACES']),
+            "NEW_LINE": int(plan.actions['NEW_LINES']),
             "CORRECTION_ENGAGE": int(plan.keystrokes["CORRECTION_ENGAGES"]),
             "CORRECTION_RELEASE": int(plan.keystrokes["CORRECTION_RELEASES"]),
         }
@@ -1214,7 +1602,10 @@ class App(tk.Tk):
 
     def _update_time_estimates_tick(self) -> None:
         if self.is_running:
-            self._update_progress_text()
+            if self.execution_mode == "fill":
+                self._update_fill_progress_text()
+            else:
+                self._update_progress_text()
         self.after(200, self._update_time_estimates_tick)
 
     def on_reset_spacebar(self) -> None:
