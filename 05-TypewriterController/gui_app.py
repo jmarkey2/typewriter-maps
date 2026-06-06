@@ -15,12 +15,15 @@ from models import (
     CMD_PRINT_GREEN,
     CMD_SPACE,
     GridModel,
+    correction_print_cmd,
+    direct_print_cmd,
     RuntimePlan,
     Step,
     compile_runtime_plan,
     export_models_to_json,
     format_hms,
     parse_json_to_models,
+    normalize_ribbon_color,
     rle_compile_grid_to_steps,
 )
 from servo_rig import ServoRig, HAS_BONNET
@@ -49,6 +52,9 @@ class App(tk.Tk):
 
         self.current_plan: Optional[RuntimePlan] = None
         self.done_expanded_count: int = 0
+        self.performance_totals: Dict[str, float] = {}
+        self.performance_counts: Dict[str, int] = {}
+        self.performance_line_samples: int = 0
 
         self.preview_printed: List[List[bool]] = []
         self.preview_rects: List[List[int]] = []
@@ -547,6 +553,20 @@ class App(tk.Tk):
         for i, k in enumerate(timing.keys()):
             add_field(right, f"timing.{k}", timing[k], i)
 
+        mode_box = ttk.Labelframe(self.tab_settings, text="Mode", padding=10)
+        mode_box.pack(fill="x", pady=(12, 0))
+        self.primary_ribbon_color = tk.StringVar(
+            value=normalize_ribbon_color(self.cfg["mode"].get("primary_ribbon_color", "BLUE"))
+        )
+        ttk.Label(mode_box, text="Primary ribbon color:").pack(side="left")
+        ttk.Combobox(
+            mode_box,
+            textvariable=self.primary_ribbon_color,
+            values=["BLUE", "GREEN"],
+            width=8,
+            state="readonly",
+        ).pack(side="left", padx=(8, 0))
+
         btns = ttk.Frame(self.tab_settings)
         btns.pack(fill="x", pady=(12, 0))
         ttk.Button(btns, text="Apply Settings", command=self.on_apply_settings).pack(side="left")
@@ -571,6 +591,7 @@ class App(tk.Tk):
             for k in list(self.cfg["timing"].keys()):
                 v = float(self.vars[f"timing.{k}"].get())
                 self.cfg["timing"][k] = v
+            self.cfg["mode"]["primary_ribbon_color"] = normalize_ribbon_color(self.primary_ribbon_color.get())
         except Exception as e:
             messagebox.showerror("Invalid settings", f"Could not apply settings.\n\n{e}")
             return
@@ -593,9 +614,11 @@ class App(tk.Tk):
         new_cfg, status = load_config(cfg_path)
         self.cfg = new_cfg
 
-        # Sync monochrome UI to cfg
+        # Sync mode UI to cfg
         self.mono_enabled.set(bool(self.cfg["mode"]["monochrome_enabled"]))
         self.mono_color.set(str(self.cfg["mode"]["monochrome_color"]))
+        if hasattr(self, "primary_ribbon_color"):
+            self.primary_ribbon_color.set(normalize_ribbon_color(self.cfg["mode"].get("primary_ribbon_color", "BLUE")))
 
         # Refresh Settings tab entry boxes (if already built)
         if hasattr(self, "vars") and isinstance(self.vars, dict):
@@ -649,6 +672,8 @@ class App(tk.Tk):
 
         self.mono_enabled.set(bool(self.cfg["mode"]["monochrome_enabled"]))
         self.mono_color.set(str(self.cfg["mode"]["monochrome_color"]))
+        if hasattr(self, "primary_ribbon_color"):
+            self.primary_ribbon_color.set(normalize_ribbon_color(self.cfg["mode"].get("primary_ribbon_color", "BLUE")))
 
         self._refresh_steps_view()
         self._render_edit_tab()
@@ -699,19 +724,9 @@ class App(tk.Tk):
 
         self.current_plan = plan
         self.done_expanded_count = 0
+        self._reset_performance_estimator()
         self.progress.configure(value=0, maximum=max(1, len(plan.expanded_cmds)))
-
-        lines = []
-        lines.append(
-            f"Actions:  BLUE={plan.actions['BLUE_CHARS']}  GREEN={plan.actions['GREEN_CHARS']}  "
-            f"SPACE={plan.actions['SPACES']}  NEW_LINE={plan.actions['NEW_LINES']}"
-        )
-        lines.append(
-            f"Keystrokes:  BLUE key={plan.keystrokes['BLUE_KEY_PRESSES']}  SPACEBAR={plan.keystrokes['SPACEBAR_PRESSES']}  "
-            f"RETURN={plan.keystrokes['RETURN_KEY_PRESSES']}  CORRECTION engages={plan.keystrokes['CORRECTION_ENGAGES']}"
-        )
-        lines.append(f"Estimated total time (timing-based): {format_hms(plan.total_est_s)}")
-        self.metrics_var.set("\n".join(lines))
+        self._refresh_metrics_text()
 
         self._draw_preview_grid(plan.preview_grid)
         self._update_progress_text()
@@ -834,6 +849,7 @@ class App(tk.Tk):
 
         self.current_plan = plan
         self.done_expanded_count = 0
+        self._reset_performance_estimator()
         self.progress.configure(value=0, maximum=max(1, len(plan.expanded_cmds)))
         self._draw_preview_grid(plan.preview_grid)
         self._refresh_steps_view(active_index=0)
@@ -871,8 +887,13 @@ class App(tk.Tk):
 
     def _worker_run(self, plan: RuntimePlan) -> None:
         rig = ServoRig(self.cfg)
+        direct_cmd = direct_print_cmd(self.cfg)
+        correction_cmd = correction_print_cmd(self.cfg)
         idx = 0
         correction_engaged = False
+
+        def record_perf(category: str, started_s: float) -> None:
+            self.msg_queue.put(("perf_action", (category, time.monotonic() - started_s)))
 
         try:
             rig.setup()
@@ -888,34 +909,46 @@ class App(tk.Tk):
                 cmd = plan.expanded_cmds[idx]
                 self.msg_queue.put(("active_expanded", idx))
 
-                next_is_green = (idx + 1 < n and plan.expanded_cmds[idx + 1] == CMD_PRINT_GREEN)
-                is_green = (cmd == CMD_PRINT_GREEN)
-                end_of_green_run = is_green and (not next_is_green)
+                next_is_correction = (idx + 1 < n and plan.expanded_cmds[idx + 1] == correction_cmd)
+                is_correction = (cmd == correction_cmd)
+                end_of_correction_run = is_correction and (not next_is_correction)
 
-                if cmd == CMD_PRINT_BLUE:
+                if cmd == direct_cmd:
+                    started = time.monotonic()
                     rig.press_blue_key()
                     time.sleep(self.cfg["timing"]["BETWEEN_CHARS"])
+                    record_perf("DIRECT_CHAR", started)
 
                 elif cmd == CMD_SPACE:
+                    started = time.monotonic()
                     rig.press_spacebar()
                     time.sleep(self.cfg["timing"]["BETWEEN_CHARS"])
+                    record_perf("SPACE", started)
 
                 elif cmd == CMD_NEW_LINE:
+                    started = time.monotonic()
                     rig.press_return()
                     time.sleep(self.cfg["timing"]["BETWEEN_CHARS"])
+                    record_perf("NEW_LINE", started)
 
-                elif cmd == CMD_PRINT_GREEN:
+                elif cmd == correction_cmd:
                     if not correction_engaged:
+                        started = time.monotonic()
                         rig.engage_correction()
+                        record_perf("CORRECTION_ENGAGE", started)
                         correction_engaged = True
 
+                    started = time.monotonic()
                     rig.press_blue_key()
                     time.sleep(self.cfg["timing"]["BETWEEN_KEYS"])
                     rig.press_spacebar()
                     time.sleep(self.cfg["timing"]["BETWEEN_CHARS"])
+                    record_perf("CORRECTION_CHAR", started)
 
-                    if end_of_green_run and correction_engaged:
+                    if end_of_correction_run and correction_engaged:
+                        started = time.monotonic()
                         rig.release_correction()
+                        record_perf("CORRECTION_RELEASE", started)
                         correction_engaged = False
 
                 else:
@@ -981,6 +1014,10 @@ class App(tk.Tk):
                     self._mark_done_from_expanded(done - 1)
                     self._grey_printed_cell(done - 1)
                     self._update_progress_text()
+
+                elif msg == "perf_action":
+                    category, elapsed_s = payload
+                    self._record_performance_action(str(category), float(elapsed_s))
 
                 elif msg == "finished":
                     self.is_running = False
@@ -1064,6 +1101,98 @@ class App(tk.Tk):
             return
         r, c = rc
         self._set_preview_cell_printed(r, c, True)
+
+    def _reset_performance_estimator(self) -> None:
+        self.performance_totals = {}
+        self.performance_counts = {}
+        self.performance_line_samples = 0
+
+    def _record_performance_action(self, category: str, elapsed_s: float) -> None:
+        if elapsed_s < 0:
+            return
+        self.performance_totals[category] = self.performance_totals.get(category, 0.0) + elapsed_s
+        self.performance_counts[category] = self.performance_counts.get(category, 0) + 1
+        if category == "NEW_LINE":
+            self.performance_line_samples += 1
+        self._refresh_metrics_text()
+        self._update_progress_text()
+
+    def _performance_category_defaults(self) -> Dict[str, float]:
+        t = self.cfg["timing"]
+        press_time = float(t["PRESS_TIME"])
+        between_keys = float(t["BETWEEN_KEYS"])
+        between_chars = float(t["BETWEEN_CHARS"])
+        new_line_delay = float(t["NEW_LINE_DELAY"])
+        return_press_hold = float(t.get("RETURN_PRESS_HOLD", 1.0))
+        post_blue_jitter = float(t.get("POST_BLUE_JITTER_DELAY", 0.06))
+        spacebar_press_s = press_time + 0.25 + press_time
+        blue_key_press_s = (2 * press_time) + post_blue_jitter
+
+        return {
+            "DIRECT_CHAR": blue_key_press_s + between_chars,
+            "CORRECTION_CHAR": blue_key_press_s + between_keys + spacebar_press_s + between_chars,
+            "SPACE": spacebar_press_s + between_chars,
+            "NEW_LINE": return_press_hold + press_time + new_line_delay + between_chars,
+            "CORRECTION_ENGAGE": float(t["CORR_ENGAGE_DELAY"]),
+            "CORRECTION_RELEASE": float(t.get("CORR_RELEASE_MOVE_DELAY", 0.3)) + float(t.get("CORR_RELEASE_PAUSE", 0.3)),
+        }
+
+    def _performance_average(self, category: str, defaults: Dict[str, float]) -> float:
+        count = self.performance_counts.get(category, 0)
+        if count > 0:
+            return self.performance_totals.get(category, 0.0) / count
+        return defaults[category]
+
+    def _estimate_performance_total_s(self, plan: RuntimePlan) -> Optional[float]:
+        if self.performance_line_samples < 1:
+            return None
+
+        defaults = self._performance_category_defaults()
+        correction_chars = int(plan.actions.get("CORRECTION_CHARS", 0))
+        direct_chars = max(0, int(plan.actions["BLUE_CHARS"]) + int(plan.actions["GREEN_CHARS"]) - correction_chars)
+        counts = {
+            "DIRECT_CHAR": direct_chars,
+            "CORRECTION_CHAR": correction_chars,
+            "SPACE": int(plan.actions["SPACES"]),
+            "NEW_LINE": int(plan.actions["NEW_LINES"]),
+            "CORRECTION_ENGAGE": int(plan.keystrokes["CORRECTION_ENGAGES"]),
+            "CORRECTION_RELEASE": int(plan.keystrokes["CORRECTION_RELEASES"]),
+        }
+
+        action_total = 0.0
+        for category, count in counts.items():
+            action_total += count * self._performance_average(category, defaults)
+
+        setup_overhead_s = 3 * float(self.cfg["timing"].get("SERVO_REST_MOVE_DELAY", 0.2)) + 0.2
+        return setup_overhead_s + action_total
+
+    def _refresh_metrics_text(self) -> None:
+        plan = self.current_plan
+        if not plan:
+            self.metrics_var.set("")
+            return
+
+        direct_color = "GREEN" if direct_print_cmd(self.cfg) == CMD_PRINT_GREEN else "BLUE"
+        correction_color = "GREEN" if correction_print_cmd(self.cfg) == CMD_PRINT_GREEN else "BLUE"
+        performance_total_s = self._estimate_performance_total_s(plan)
+        if performance_total_s is None:
+            performance_text = "pending until first line completes"
+        else:
+            performance_text = format_hms(performance_total_s)
+
+        lines = []
+        lines.append(f"Ribbon:  primary={direct_color}  correction={correction_color}")
+        lines.append(
+            f"Actions:  BLUE={plan.actions['BLUE_CHARS']}  GREEN={plan.actions['GREEN_CHARS']}  "
+            f"SPACE={plan.actions['SPACES']}  NEW_LINE={plan.actions['NEW_LINES']}"
+        )
+        lines.append(
+            f"Keystrokes:  BLUE key={plan.keystrokes['BLUE_KEY_PRESSES']}  SPACEBAR={plan.keystrokes['SPACEBAR_PRESSES']}  "
+            f"RETURN={plan.keystrokes['RETURN_KEY_PRESSES']}  CORRECTION engages={plan.keystrokes['CORRECTION_ENGAGES']}"
+        )
+        lines.append(f"Estimated total time (timing-based): {format_hms(plan.total_est_s)}")
+        lines.append(f"Estimated total time (performance-based): {performance_text}")
+        self.metrics_var.set("\n".join(lines))
 
     def _update_progress_text(self) -> None:
         plan = self.current_plan

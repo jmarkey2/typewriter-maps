@@ -38,6 +38,7 @@
   },
   "mode": {
     "monochrome_enabled": false,
-    "monochrome_color": "BLUE"
+    "monochrome_color": "BLUE",
+    "primary_ribbon_color": "BLUE"
   }
 }

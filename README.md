@@ -41,8 +41,8 @@ This project started during Day 9 ("analog") of the 30 Day Map Challenge. After 
 - Open `03-Create-instructions-html/typewriter_helper_updated_split_export.html`.
 - Load a grid GeoJSON and choose the property field that should drive the typing instructions.
 - Map each field value to one of three actions:
-  - `BLUE`: print with the default ribbon color.
-  - `GREEN`: print with the correction/color-toggle path.
+  - `BLUE`: print a blue cell.
+  - `GREEN`: print a green cell.
   - `SPACE`: press the space bar to leave blank paper.
 - Save generated instruction sets into `04-Instructions/` as `.json` (or split/zipped collections for larger works).
 
@@ -81,7 +81,7 @@ Controller behavior is configured in:
 
 - `05-TypewriterController/typewriter_config.txt`
 
-Use this file to manage key servo mappings, motion limits, and timing values that control print reliability.
+Use this file to manage key servo mappings, motion limits, timing values that control print reliability, and the primary ribbon color. Set `mode.primary_ribbon_color` to `BLUE` or `GREEN` to match the physical ribbon orientation; generated instructions still describe the final printed colors.
 
 ## License
 

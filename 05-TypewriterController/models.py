@@ -9,6 +9,9 @@ CMD_PRINT_GREEN = "PRINT_GREEN"
 CMD_SPACE = "SPACE"
 CMD_NEW_LINE = "NEW_LINE"
 
+RIBBON_BLUE = "BLUE"
+RIBBON_GREEN = "GREEN"
+
 LEGACY_BLUE = "BLUE"
 LEGACY_GREEN = "GREEN"
 LEGACY_SPACE = "SPACE"
@@ -69,6 +72,26 @@ def rle_compile_grid_to_steps(grid: GridModel) -> List[Step]:
         flush_run()
         steps.append(Step(CMD_NEW_LINE, 1))
     return steps
+
+
+def normalize_ribbon_color(value: Any) -> str:
+    color = str(value).upper()
+    return RIBBON_GREEN if color == RIBBON_GREEN else RIBBON_BLUE
+
+
+def primary_ribbon_color(cfg: Dict[str, Any]) -> str:
+    mode = cfg.get("mode", {})
+    if not isinstance(mode, dict):
+        mode = {}
+    return normalize_ribbon_color(mode.get("primary_ribbon_color", RIBBON_BLUE))
+
+
+def direct_print_cmd(cfg: Dict[str, Any]) -> str:
+    return CMD_PRINT_GREEN if primary_ribbon_color(cfg) == RIBBON_GREEN else CMD_PRINT_BLUE
+
+
+def correction_print_cmd(cfg: Dict[str, Any]) -> str:
+    return CMD_PRINT_BLUE if primary_ribbon_color(cfg) == RIBBON_GREEN else CMD_PRINT_GREEN
 
 
 def parse_json_to_models(path: str) -> Tuple[Dict[str, Any], Optional[GridModel], List[Step]]:
@@ -189,16 +212,16 @@ def _safe_meta_int_any(loaded_json: Dict[str, Any], *keys: str) -> Optional[int]
     return None
 
 
-def _find_green_runs(expanded_cmds: List[str]) -> List[Tuple[int, int]]:
+def _find_cmd_runs(expanded_cmds: List[str], target_cmd: str) -> List[Tuple[int, int]]:
     runs: List[Tuple[int, int]] = []
     i = 0
     n = len(expanded_cmds)
     while i < n:
-        if expanded_cmds[i] != CMD_PRINT_GREEN:
+        if expanded_cmds[i] != target_cmd:
             i += 1
             continue
         j = i
-        while j + 1 < n and expanded_cmds[j + 1] == CMD_PRINT_GREEN:
+        while j + 1 < n and expanded_cmds[j + 1] == target_cmd:
             j += 1
         runs.append((i, j))
         i = j + 1
@@ -229,6 +252,8 @@ def compile_runtime_plan(
     mono_on = bool(cfg["mode"]["monochrome_enabled"])
     mono_color = str(cfg["mode"]["monochrome_color"])
     mono_cmd = CMD_PRINT_BLUE if mono_color == "BLUE" else CMD_PRINT_GREEN
+    direct_cmd = direct_print_cmd(cfg)
+    correction_cmd = correction_print_cmd(cfg)
 
     for i, s in enumerate(condensed_steps):
         cmd = s.cmd
@@ -311,24 +336,25 @@ def compile_runtime_plan(
     # Match ServoRig timing more closely
     return_press_hold = float(t.get("RETURN_PRESS_HOLD", 1.0))
     corr_release_overhead = float(t.get("CORR_RELEASE_MOVE_DELAY", 0.3)) + float(t.get("CORR_RELEASE_PAUSE", 0.3))
-    space_toggle_delay = float(t.get("SPACE_TOGGLE_DELAY", 1.0))
     post_blue_jitter = float(t.get("POST_BLUE_JITTER_DELAY", 0.06))
+    spacebar_press_s = press_time + 0.25 + press_time
+    blue_key_press_s = (2 * press_time) + post_blue_jitter
 
     durations_s: List[float] = []
     for cmd in expanded_cmds:
-        if cmd == CMD_PRINT_BLUE:
-            durations_s.append((2 * press_time) + post_blue_jitter + between_chars)
+        if cmd == direct_cmd:
+            durations_s.append(blue_key_press_s + between_chars)
         elif cmd == CMD_SPACE:
-            durations_s.append(space_toggle_delay + between_chars)
+            durations_s.append(spacebar_press_s + between_chars)
         elif cmd == CMD_NEW_LINE:
             durations_s.append(return_press_hold + press_time + new_line_delay + between_chars)
-        elif cmd == CMD_PRINT_GREEN:
-            durations_s.append((2 * press_time) + post_blue_jitter + between_keys + space_toggle_delay + between_chars)
+        elif cmd == correction_cmd:
+            durations_s.append(blue_key_press_s + between_keys + spacebar_press_s + between_chars)
         else:
             durations_s.append(between_chars)
 
-    green_runs = _find_green_runs(expanded_cmds)
-    for start, end in green_runs:
+    correction_runs = _find_cmd_runs(expanded_cmds, correction_cmd)
+    for start, end in correction_runs:
         if 0 <= start < len(durations_s):
             durations_s[start] += corr_engage_delay
         if 0 <= end < len(durations_s):
@@ -348,14 +374,15 @@ def compile_runtime_plan(
         "GREEN_CHARS": sum(1 for cmd in expanded_cmds if cmd == CMD_PRINT_GREEN),
         "SPACES": sum(1 for cmd in expanded_cmds if cmd == CMD_SPACE),
         "NEW_LINES": sum(1 for cmd in expanded_cmds if cmd == CMD_NEW_LINE),
+        "CORRECTION_CHARS": sum(1 for cmd in expanded_cmds if cmd == correction_cmd),
     }
 
     keystrokes = {
         "BLUE_KEY_PRESSES": actions["BLUE_CHARS"] + actions["GREEN_CHARS"],
-        "SPACEBAR_PRESSES": actions["SPACES"] + actions["GREEN_CHARS"],
+        "SPACEBAR_PRESSES": actions["SPACES"] + actions["CORRECTION_CHARS"],
         "RETURN_KEY_PRESSES": actions["NEW_LINES"],
-        "CORRECTION_ENGAGES": len(green_runs),
-        "CORRECTION_RELEASES": len(green_runs),
+        "CORRECTION_ENGAGES": len(correction_runs),
+        "CORRECTION_RELEASES": len(correction_runs),
     }
 
     return RuntimePlan(

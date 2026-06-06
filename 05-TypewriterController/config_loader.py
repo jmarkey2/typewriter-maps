@@ -38,6 +38,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "mode": {
         "monochrome_enabled": False,
         "monochrome_color": "BLUE",
+        "primary_ribbon_color": "BLUE",
     },
 }
 
